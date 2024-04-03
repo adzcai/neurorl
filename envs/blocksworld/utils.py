@@ -1,6 +1,7 @@
 import copy
 import itertools
 import pprint
+import random
 import numpy as np
 
 from envs.blocksworld.AC import bw_apps
@@ -85,6 +86,7 @@ def go_activate_block(curblock, newblock, action_goto_next=[19], action_goto_pre
 		diff = curblock-newblock
 	return actions
 
+
 def top(assembly_dict, 
 		last_active_assembly, 
 		head, 
@@ -113,18 +115,15 @@ def top(assembly_dict,
 		bid: (int)
 			top block idx
 	'''
-	if last_active_assembly[head] == -1:
+	if last_active_assembly[head] == -1: # head is silence
 		return None, None, None
-	area, a, bid = None, None, None
 	candidate_areas, candidate_as = assembly_dict[head][last_active_assembly[head]]
 	for area, a in zip(candidate_areas, candidate_as):
 		if blocks_area in assembly_dict[area][a][0]:
 			idx = assembly_dict[area][a][0].index(blocks_area)
 			bid = assembly_dict[area][a][1][idx]
-			area = area
-			a = a
-			bid = bid
-	return area, a, bid
+			return area, a, bid
+	return None, None, None
 
 
 def is_last_block(assembly_dict, 
@@ -137,10 +136,12 @@ def is_last_block(assembly_dict,
 	'''
 	if top_area==None: # no top area given
 		return False
-	for A in assembly_dict[top_area][top_area_a][0]: # check if the block encoded in top area assembly a is the only block in the brain
-		if A != blocks_area and A != head: # assembly is connected with other node areas
-			if ('_N0' in top_area and '_N1' in A) or ('_N1' in top_area and '_N2' in A) or ('_N2' in top_area and '_N0' in A):
-				return False
+	# check if top assembly connects with another node assembly that represents any block
+	for A, a in zip(assembly_dict[top_area][top_area_a][0], assembly_dict[top_area][top_area_a][1]): 
+		if (A != blocks_area and A != head) \
+			and (('_N0' in top_area and '_N1' in A) or ('_N1' in top_area and '_N2' in A) or ('_N2' in top_area and '_N0' in A)) \
+			and (blocks_area in assembly_dict[A][a][0]): 
+				return False # top_area assembly connects with another node assembly that connects with blocks
 	return True
 
 
@@ -189,11 +190,16 @@ def synthetic_readout(assembly_dict,
 	if len(assembly_dict[head])==0 or last_active_assembly[head]==-1:
 		return [None] * readout_length # no assembly in head, return [None, None, ...]
 	# if assembly exists in head, get the first node connected with head
-	areas_from_head, aidx_from_head = assembly_dict[head][last_active_assembly[head]]
+	areas_from_head, aidx_from_head = assembly_dict[head][last_active_assembly[head]][0], assembly_dict[head][last_active_assembly[head]][1]
 	prev_area, prev_area_a = head, last_active_assembly[head]
 	area, area_a = None, None # initiate next area to decode from
 	if len(areas_from_head) != 0 and len(aidx_from_head)!= 0: # if head assembly is connected with a node area
 		area, area_a = areas_from_head[0], aidx_from_head[0] # next area to read from
+	# print("------inside readout")
+	# pprint.pprint(assembly_dict)
+	# pprint.pprint(last_active_assembly)
+	# print(area, area_a)
+	# print("------end readout")
 	for iblock in range(readout_length): 
 		if area==None and area_a==None: # if current area is not available
 			readout.append(None)
@@ -206,12 +212,13 @@ def synthetic_readout(assembly_dict,
 			readout.append(None)
 		# find the next area to decode
 		areas_from_area, aidx_from_area = assembly_dict[area][area_a] # assemblies connected with current area
-		new_area, new_area_a = None, None 
+		new_area, new_area_a = None, None
 		for A, a in zip(areas_from_area, aidx_from_area): # iterate through current assembly's connections
-			if (A != blocks_area) and (A != prev_area): # next area to decode
-				if ('_N0' in area and '_N1' in A) or ('_N1' in area and '_N2' in A) or ('_N2' in area and '_N0' in A):
-					new_area, new_area_a = A, a
-					break
+			if (A != blocks_area) and (A != prev_area) and (A != head) \
+				and (('_N0' in area and '_N1' in A) or ('_N1' in area and '_N2' in A) or ('_N2' in area and '_N0' in A)): 
+				new_area = A # only look for the next node area in the correct order
+				new_area_a = a
+				break
 		prev_area, prev_area_a = area, area_a
 		area, area_a = new_area, new_area_a
 	return readout
@@ -386,6 +393,8 @@ def synthetic_project(state,
 			print(f'{destination} as destination') if verbose else 0
 			# search if destination area already has an assembly connected with input sources
 			for assembly_idx, assembly_content in enumerate(prev_assembly_dict[destination]): # check existing assembly in dest one by one
+				if prev_last_active_assembly[destination]==-1: # if dest is silence, skip
+					continue
 				connected_areas, connected_assembly_ids = assembly_content # assembly_content: [[Area1, Area2, ...], [assembly1, assembly2, ...]]
 				print(f"\tchecking destination assembly id {assembly_idx}: connected areas {connected_areas}, connected ids {connected_assembly_ids}") if verbose else 0
 				if (tuple(connected_areas) in sources_permutation): # if destination assembly connects with all source areas (only area names match)
@@ -545,3 +554,321 @@ def synthetic_project(state,
 	print(f"\n--------------------- end of all project rounds, num_assemblies={num_assemblies}, last_active_assembly={last_active_assembly}, assembly_dict:{pprint.pprint(assembly_dict)}") if verbose else 0
 	return assembly_dict, last_active_assembly, num_assemblies
 
+
+def parse_expert_demo(goal, num_blocks):
+	'''
+	Input:
+		goal: (list of length max_blocks)
+		num_blocks: (int)
+			valid number of blocks in the parse goal
+	Return:
+		expert_demo: (list of int)
+			list of expert actions to solve the puzzle.
+	'''
+	stack = goal[:num_blocks]
+	actions = []
+	action_module0 = [10,0] # optimal fiber actions for parsing first block
+	action_module1 = [11,1,6,2] # ... second block
+	action_module2 = [7,3,12,4] # ... third block
+	action_module3 = [13,5,0,8] # ... fourth block
+	action_module4 = [1,9,2,6] # ... fifth block
+	inhibit_action_module0 = [11, 1] # close fibers to terminate episode after module0
+	inhibit_action_module1 = [7, 3] 
+	inhibit_action_module2 = [13, 5]
+	inhibit_action_module3 = [1, 9]
+	inhibit_action_module4 = [3, 7]
+	project_star = [18]
+	activate_next_block = [19]
+	activate_prev_block = [20]
+	activated_block = -1 # currently activated block id in BLOCKS area
+	if len(stack)>0: # module 0
+		tmp_actions = []
+		tmp_actions += go_activate_block(activated_block, stack[0], activate_next_block, activate_prev_block)
+		tmp_actions += action_module0
+		random.shuffle(tmp_actions)
+		actions += tmp_actions
+		actions += project_star
+		activated_block = stack.pop(0)
+	if len(stack)>0: # module 1
+		tmp_actions = []
+		tmp_actions += go_activate_block(activated_block, stack[0], activate_next_block, activate_prev_block)
+		tmp_actions += action_module1
+		random.shuffle(tmp_actions)
+		actions += tmp_actions
+		actions += project_star
+		activated_block = stack.pop(0)
+	else: # no more blocks after module0
+		tmp_actions = inhibit_action_module0
+		random.shuffle(tmp_actions)
+		actions += tmp_actions
+		return actions
+	if len(stack)==0: # no more blocks after module1
+		tmp_actions = inhibit_action_module1
+		random.shuffle(tmp_actions)
+		actions += tmp_actions
+		return actions
+	imodule = 0
+	while True: # loop through module 2,3,4
+		tmp_actions = []
+		tmp_actions += go_activate_block(activated_block, stack[0], activate_next_block, activate_prev_block)
+		if imodule%3 == 0:
+			actions += action_module2
+		elif imodule%3 == 1:
+			actions += action_module3
+		elif imodule%3 == 2:
+			actions += action_module4
+		random.shuffle(tmp_actions)
+		actions += tmp_actions
+		actions += project_star
+		activated_block = stack.pop(0)
+		if len(stack)==0:
+			tmp_actions = [inhibit_action_module2, inhibit_action_module3, inhibit_action_module4][imodule%3]
+			random.shuffle(tmp_actions)
+			actions += tmp_actions
+			return actions
+		imodule += 1
+	
+
+def remove_expert_demo(simulator):
+	final_actions = []
+	top_area_name, top_area_a, top_block_idx = top(simulator.assembly_dict, simulator.last_active_assembly, simulator.head, simulator.blocks_area)
+	# first check if any fiber needs to be inhibited
+	final_actions = []
+	for stateidx in simulator.stateidx_to_fibername:
+		if simulator.state[stateidx] == 1: # fiber opened
+			aname, arg1, arg2 = "inhibit_fiber", simulator.stateidx_to_fibername[stateidx][0], simulator.stateidx_to_fibername[stateidx][1]
+			try:
+				final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+			except:
+				final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+	random.shuffle(final_actions)
+	# check is last block
+	if is_last_block(simulator.assembly_dict, simulator.head, top_area_name, top_area_a, simulator.blocks_area): 
+		final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(("silence_head", None))] )
+		random.shuffle(final_actions)
+		return final_actions
+	# if not last block, get the new top area
+	if '_N0' in top_area_name:
+		new_top_area = [area for area in simulator.all_areas if '_N1' in area][0]
+	elif '_N1' in top_area_name:
+		new_top_area = [area for area in simulator.all_areas if '_N2' in area ][0]
+	elif '_N2' in top_area_name:
+		new_top_area = [area for area in simulator.all_areas if '_N0' in area ][0]
+	# stimulate existing assemblies
+	aname, arg1, arg2 = "disinhibit_fiber", simulator.head, top_area_name
+	try:
+		final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+	except:
+		final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+	action = ("project_star", None)
+	final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+	tmp_actions = []
+	aname, arg1, arg2 = "inhibit_fiber", simulator.head, top_area_name
+	try:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+	except:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+	aname, arg1, arg2 = "disinhibit_fiber", simulator.blocks_area, new_top_area
+	try:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+	except:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+	tmp_actions += go_activate_block(simulator.last_active_assembly[simulator.blocks_area], simulator.goal[0])
+	random.shuffle(tmp_actions)
+	final_actions += tmp_actions
+	action = ("project_star", None)
+	final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+	aname, arg1, arg2 = "disinhibit_fiber", top_area_name, new_top_area 
+	try:
+		final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+	except:
+		final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+	action = ("project_star", None)
+	final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+	tmp_actions = []
+	aname, arg1, arg2 = "inhibit_fiber", top_area_name, new_top_area
+	try:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+	except:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+	# build new connection
+	aname, arg1, arg2 = "disinhibit_fiber", new_top_area, simulator.head
+	try:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+	except:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+	action = ("silence_head", None)
+	tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+	random.shuffle(tmp_actions)
+	final_actions += tmp_actions
+	action = ("project_star", None)
+	final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+	# close all connections
+	tmp_actions = []
+	aname, arg1, arg2 = "inhibit_fiber", new_top_area, simulator.head
+	try:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+	except:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+	aname, arg1, arg2 = "inhibit_fiber", simulator.blocks_area, new_top_area
+	try:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+	except:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+	random.shuffle(tmp_actions)
+	final_actions += tmp_actions
+	return final_actions
+
+
+def add_expert_demo(simulator):
+	final_actions = []
+	top_area_name, top_area_a, top_block_idx = top(simulator.assembly_dict, simulator.last_active_assembly, simulator.head, simulator.blocks_area)
+	# first check if any fiber needs to be inhibited
+	for stateidx in simulator.stateidx_to_fibername:
+		if simulator.state[stateidx] == 1: # fiber opened
+			aname, arg1, arg2 = "inhibit_fiber", simulator.stateidx_to_fibername[stateidx][0], simulator.stateidx_to_fibername[stateidx][1]
+			try:
+				final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+			except:
+				final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+	# activate new block assembly
+	final_actions += go_activate_block(curblock=simulator.last_active_assembly[simulator.blocks_area], newblock=simulator.newblock)
+	# get the new top area
+	if top_area_name==None: # if no block exists in brain
+		new_top_area = [area for area in simulator.all_areas if '_N0' in area][0] # TODO should this be N0?
+		aname, arg1, arg2 = "disinhibit_fiber", simulator.blocks_area, new_top_area
+		try:
+			final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+		except:
+			final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+		random.shuffle(final_actions)
+		action = ("project_star", None)
+		final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+		tmp_actions = []
+		if simulator.last_active_assembly[simulator.head] != -1:
+			action = ("silence_head", None)
+			tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+		aname, arg1, arg2 = "inhibit_fiber", simulator.blocks_area, new_top_area
+		try:
+			tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+		except:
+			tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+		aname, arg1, arg2 = "disinhibit_fiber", new_top_area, simulator.head
+		try:
+			tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+		except:
+			tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+		random.shuffle(tmp_actions)
+		final_actions += tmp_actions
+		action = ("project_star", None)
+		final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+		tmp_actions = []
+		aname, arg1, arg2 = "inhibit_fiber", new_top_area, simulator.head
+		try:
+			tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+		except:
+			tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+		random.shuffle(tmp_actions)
+		final_actions += tmp_actions
+		return final_actions
+	elif '_N0' in top_area_name:
+		new_top_area = [area for area in simulator.all_areas if '_N2' in area][0]
+	elif '_N1' in top_area_name:
+		new_top_area = [area for area in simulator.all_areas if '_N0' in area ][0]
+	elif '_N2' in top_area_name:
+		new_top_area = [area for area in simulator.all_areas if '_N1' in area ][0]
+	# encode new block in new top area
+	aname, arg1, arg2 = "disinhibit_fiber", simulator.blocks_area, new_top_area
+	try:
+		final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+	except:
+		final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+	random.shuffle(final_actions)
+	action = ("project_star", None)
+	final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+	# stimulate head
+	tmp_actions = []
+	tmp_actions += go_activate_block(curblock=simulator.newblock, newblock=simulator.goal[1])
+	aname, arg1, arg2 = "inhibit_fiber", simulator.blocks_area, new_top_area
+	try:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+	except:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+	aname, arg1, arg2 = "disinhibit_fiber", simulator.blocks_area, top_area_name
+	try:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+	except:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+	random.shuffle(tmp_actions)
+	final_actions += tmp_actions
+	action = ("project_star", None)
+	final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+	tmp_actions = []
+	aname, arg1, arg2 = "disinhibit_fiber", simulator.head, top_area_name
+	try:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+	except:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+	aname, arg1, arg2 = "inhibit_fiber", simulator.blocks_area, top_area_name
+	try:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+	except:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+	random.shuffle(tmp_actions)
+	final_actions += tmp_actions
+	action = ("project_star", None)
+	final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+	tmp_actions = []
+	aname, arg1, arg2 = "disinhibit_fiber", simulator.blocks_area, new_top_area
+	try:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+	except:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+	aname, arg1, arg2 = "disinhibit_fiber", new_top_area, top_area_name
+	try:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+	except:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+	tmp_actions += go_activate_block(curblock=simulator.goal[1], newblock=simulator.newblock)
+	random.shuffle(tmp_actions)
+	final_actions += tmp_actions
+	action = ("project_star", None)
+	final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+	tmp_actions = []
+	# project new block to head
+	aname, arg1, arg2 = "inhibit_fiber", simulator.head, top_area_name
+	try:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+	except:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+	aname, arg1, arg2 = "disinhibit_fiber", new_top_area, simulator.head
+	try:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+	except:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+	action = ("silence_head", None)
+	tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+	aname, arg1, arg2 = "inhibit_fiber", new_top_area, top_area_name
+	try:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+	except:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+	random.shuffle(tmp_actions)
+	final_actions += tmp_actions
+	action = ("project_star", None)
+	final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+	# close all fibers
+	tmp_actions = []
+	aname, arg1, arg2 = "inhibit_fiber", new_top_area, simulator.head
+	try:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+	except:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+	aname, arg1, arg2 = "inhibit_fiber", new_top_area, simulator.blocks_area
+	try:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg1, arg2))] )
+	except:
+		tmp_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
+	random.shuffle(tmp_actions)
+	final_actions += tmp_actions
+	return final_actions

@@ -105,77 +105,6 @@ class Simulator():
 		del self.all_correct, self.just_projected
 		del self.current_time, self.num_assemblies, self.num_fibers
 		return 
-
-
-	def sample_expert_demo(self):
-		'''
-		Return:
-			expert_demo: (list of int)
-				list of expert actions to solve the puzzle.
-		'''
-		stack = self.goal[:self.num_blocks]
-		actions = []
-		action_module0 = [10,0] # optimal fiber actions for parsing first block
-		action_module1 = [11,1,6,2] # ... second block
-		action_module2 = [7,3,12,4] # ... third block
-		action_module3 = [13,5,0,8] # ... fourth block
-		action_module4 = [1,9,2,6] # ... fifth block
-		inhibit_action_module0 = [11, 1] # close fibers to terminate episode after module0
-		inhibit_action_module1 = [7, 3] 
-		inhibit_action_module2 = [13, 5]
-		inhibit_action_module3 = [1, 9]
-		inhibit_action_module4 = [3, 7]
-		project_star = [18]
-		activate_next_block = [19]
-		activate_prev_block = [20]
-		activated_block = -1 # currently activated block id in BLOCKS area
-		if len(stack)>0: # module 0
-			tmp_actions = []
-			tmp_actions += utils.go_activate_block(activated_block, stack[0], activate_next_block, activate_prev_block)
-			tmp_actions += action_module0
-			random.shuffle(tmp_actions)
-			actions += tmp_actions
-			actions += project_star
-			activated_block = stack.pop(0)
-		if len(stack)>0: # module 1
-			tmp_actions = []
-			tmp_actions += utils.go_activate_block(activated_block, stack[0], activate_next_block, activate_prev_block)
-			tmp_actions += action_module1
-			random.shuffle(tmp_actions)
-			actions += tmp_actions
-			actions += project_star
-			activated_block = stack.pop(0)
-		else: # no more blocks after module0
-			tmp_actions = inhibit_action_module0
-			random.shuffle(tmp_actions)
-			actions += tmp_actions
-			return actions
-		if len(stack)==0: # no more blocks after module1
-			tmp_actions = inhibit_action_module1
-			random.shuffle(tmp_actions)
-			actions += tmp_actions
-			return actions
-		imodule = 0
-		while True: # loop through module 2,3,4
-			tmp_actions = []
-			tmp_actions += utils.go_activate_block(activated_block, stack[0], activate_next_block, activate_prev_block)
-			if imodule%3 == 0:
-				actions += action_module2
-			elif imodule%3 == 1:
-				actions += action_module3
-			elif imodule%3 == 2:
-				actions += action_module4
-			random.shuffle(tmp_actions)
-			actions += tmp_actions
-			actions += project_star
-			activated_block = stack.pop(0)
-			if len(stack)==0:
-				tmp_actions = [inhibit_action_module2, inhibit_action_module3, inhibit_action_module4][imodule%3]
-				random.shuffle(tmp_actions)
-				actions += tmp_actions
-				return actions
-			imodule += 1
-		
 		
 
 	def step(self, action_idx):
@@ -235,9 +164,15 @@ class Simulator():
 					self.state[sidx] = readout[ib] if readout[ib] != None else -1
 				# update top area
 				top_area, topa, topbid = utils.top(self.assembly_dict, self.last_active_assembly, self.head, self.blocks_area)
-				self.state[area_to_stateidx["top_area"]] = self.node_areas.index(top_area)
-				self.state[area_to_stateidx["top_assembly"]] = topa
-				self.state[area_to_stateidx["top_block"]] = topbid
+				if top_area==None:
+					assert readout[0]==None, f"top area is {top_area} but readout is nonempty {readout}"
+					self.state[area_to_stateidx["top_area"]] = -1
+					self.state[area_to_stateidx["top_assembly"]] = -1
+					self.state[area_to_stateidx["top_block"]] = -1
+				else:
+					self.state[area_to_stateidx["top_area"]] = self.node_areas.index(top_area)
+					self.state[area_to_stateidx["top_assembly"]] = topa
+					self.state[area_to_stateidx["top_block"]] = topbid
 				# update is last block
 				is_last_block = utils.is_last_block(self.assembly_dict, self.head, top_area, topa, self.blocks_area)
 				self.state[area_to_stateidx["is_last_block"]] = 1 if is_last_block else 0
@@ -253,7 +188,7 @@ class Simulator():
 			self.just_projected = False
 		elif action_name == "silence_head":
 			if self.last_active_assembly[self.head]== -1: # BAD, head is already silence
-				assert self.state[area_to_stateidx[self.head][0]] == -1, \
+				assert self.state[area_to_stateidx[self.head]['last_activated']] == -1, \
 				f"in state vector, the last activated assembly in head ({self.state[area_to_stateidx[self.head][0]]}) should already be -1 for repeative silence"
 				reward -= self.action_cost
 			else: # GOOD, valid silence
@@ -489,9 +424,10 @@ def test_simulator(max_blocks=7, expert=True, repeat=10, verbose=False):
 	for difficulty in range(max_blocks+1):
 		for _ in range(repeat):
 			print(f'\n\n------------ repeat {repeat}, state after reset\t{sim.reset(shuffle=True, difficulty_mode=difficulty)[0]}')
-			expert_demo = sim.sample_expert_demo() if expert else None
+			expert_demo = utils.parse_expert_demo(sim.goal, sim.num_blocks) if expert else None
 			rtotal = 0 # total reward of episode
 			nsteps = sim.max_steps if (not expert) else len(expert_demo)
+			print(f"expert demo {expert_demo}")
 			for t in range(nsteps):
 				action_idx = random.choice(list(range(sim.num_actions))) if (not expert) else expert_demo[t]
 				next_state, reward, terminated, truncated, info = sim.step(action_idx)
