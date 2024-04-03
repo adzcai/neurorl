@@ -53,10 +53,11 @@ def init_simulator_areas(max_stacks=1,
 	all_areas = [blocks_area]
 	all_areas.extend(other_areas) 
 	head = [element for element in all_areas if '_H' in element][0]
-	return all_areas, head, relocated_area, blocks_area
+	prefixed_node_areas = bw_apps.add_prefix(regions=[item for sublist in node_areas for item in sublist], prefix=prefix)
+	return all_areas, head, prefixed_node_areas, relocated_area, blocks_area
 
 
-def go_activate_block(curblock, newblock, action_goto_next, action_goto_prev):
+def go_activate_block(curblock, newblock, action_goto_next=[19], action_goto_prev=[20]):
 	'''
 	Input:
 		curblock: (int)
@@ -135,7 +136,7 @@ def is_last_block(assembly_dict,
 	Check if top_area_a assembly in top_area represents the last block in the chain
 	'''
 	if top_area==None: # no top area given
-		return True
+		return False
 	for A in assembly_dict[top_area][top_area_a][0]: # check if the block encoded in top area assembly a is the only block in the brain
 		if A != blocks_area and A != head: # assembly is connected with other node areas
 			if ('_N0' in top_area and '_N1' in A) or ('_N1' in top_area and '_N2' in A) or ('_N2' in top_area and '_N0' in A):
@@ -192,7 +193,7 @@ def synthetic_readout(assembly_dict,
 	prev_area, prev_area_a = head, last_active_assembly[head]
 	area, area_a = None, None # initiate next area to decode from
 	if len(areas_from_head) != 0 and len(aidx_from_head)!= 0: # if head assembly is connected with a node area
-		area, area_a = areas_from_head[-1], aidx_from_head[-1] # next area to read from
+		area, area_a = areas_from_head[0], aidx_from_head[0] # next area to read from
 	for iblock in range(readout_length): 
 		if area==None and area_a==None: # if current area is not available
 			readout.append(None)

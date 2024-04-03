@@ -14,7 +14,7 @@ python configs/parse_trainer.py \
   --wandb_entity=yichenli \
   --wandb_project=parse \
   --run_distributed=True \
-  --time=0-8:00:00 
+  --time=0-12:00:00 
 
 // test in interactive session
 python configs/parse_trainer.py \
@@ -560,7 +560,7 @@ def sweep(search: str = 'default'):
     space = [
         {
             "group": tune.grid_search(['3P']),
-            "num_steps": tune.grid_search([100e6]),
+            "num_steps": tune.grid_search([200e6]),
 
             "max_grad_norm": tune.grid_search([80.0]),
             "learning_rate": tune.grid_search([1e-4]),
