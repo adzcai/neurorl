@@ -12,29 +12,27 @@ from absl.testing import absltest
 from acme import types, specs
 from typing import Any, Dict, Optional
 import tree
-
-cfg = configurations['remove']
 '''
 TODO
+	alternate btw add and remove
+DONE
 	align parameters in parse and remove
 	edit parse to generate expert demo for arbitrary lists
-	allow parse to take goal as input argument
 	match the state vector in parse and remove
 	match the action dict in parse and remove
 '''
+
+cfg = configurations['remove']
+
 class Simulator(parse.Simulator):
 	def __init__(self, 
-				max_blocks = cfg['max_blocks'],
 				max_steps = cfg['max_steps'],
 				action_cost = cfg['action_cost'],
 				reward_decay_factor = cfg['reward_decay_factor'],
-				episode_max_reward = cfg['episode_max_reward'],
 				verbose=False):
-		super().__init__(max_blocks = max_blocks,
-						max_steps = max_steps,
+		super().__init__(max_steps = max_steps,
 						action_cost = action_cost,
 						reward_decay_factor = reward_decay_factor,
-						episode_max_reward = episode_max_reward,
 						verbose = verbose)
 		assert cfg['cfg'] == 'remove', f"cfg is {cfg['cfg']}"
 
@@ -48,7 +46,7 @@ class Simulator(parse.Simulator):
 		num_blocks = random.randint(1, self.max_blocks)
 		assert num_blocks <= self.max_blocks, \
 			f"number of actual blocks to parse {num_blocks} should be smaller than max_blocks {self.max_blocks}"
-		stack = list(range(num_blocks)) # the actual blocks in the stack, to be filled
+		stack = random.sample(list(range(self.hyper_max_blocks)), num_blocks) # the actual blocks in the stack
 		if shuffle:
 			random.shuffle(stack)
 		goal[:num_blocks] = stack
@@ -79,7 +77,7 @@ class Simulator(parse.Simulator):
 		self.all_correct = False # if the most recent readout has everything correct
 		self.correct_record = np.zeros_like(self.goal) # binary record for how many blocks are ever correct in the episode
 		self.current_time = 0 # current step in the episode
-		self.num_assemblies = self.max_blocks
+		self.num_assemblies = self.hyper_max_blocks
 		# first parse the stack
 		parse_actions = utils.parse_expert_demo(self.goal, self.num_blocks)
 		print(f"\n\nparsing {self.goal}...") 
@@ -119,10 +117,10 @@ class Simulator(parse.Simulator):
 
 
 
-def test_simulator(max_blocks=7, expert=True, repeat=10, verbose=False):
-	sim = Simulator(max_blocks=max_blocks, verbose=verbose)
+def test_simulator(expert=True, repeat=10, verbose=False):
+	sim = Simulator(verbose=verbose)
 	pprint.pprint(sim.action_dict)
-	for difficulty in range(max_blocks+1):
+	for difficulty in range(sim.max_blocks+1):
 		for _ in range(repeat):
 			print(f'------------ repeat {repeat}, state after reset\t{sim.reset(shuffle=True, difficulty_mode="curriculum", cur_curriculum_level=difficulty)[0]}')
 			expert_demo = utils.remove_expert_demo(sim) if expert else None
@@ -241,7 +239,7 @@ def _convert_to_spec(space: Any,
 			name=name
 		)
 	elif isinstance(space, np.ndarray): # observation
-		min_val, max_val = space.min(), cfg['max_assemblies']
+		min_val, max_val = space.min(), configurations['parse']['max_assemblies']
 		try:
 			assert name=='observation'
 		except:	
@@ -266,7 +264,7 @@ def _convert_to_spec(space: Any,
 
 class Test(test_utils.EnvironmentTestMixin, absltest.TestCase):
 	def make_object_under_test(self):
-		sim = Simulator(max_blocks=7)
+		sim = Simulator()
 		return EnvWrapper(sim)
 	def make_action_sequence(self):
 		for _ in range(200):
@@ -274,7 +272,7 @@ class Test(test_utils.EnvironmentTestMixin, absltest.TestCase):
 
 if __name__ == "__main__":
 	# random.seed(0)
-	test_simulator(max_blocks=7, expert=True, repeat=100, verbose=False)
+	test_simulator(expert=True, repeat=100, verbose=False)
 	
 	absltest.main()
 

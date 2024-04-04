@@ -62,8 +62,9 @@ import library.networks as networks
 
 from envs.blocksworld import parse
 from envs.blocksworld.cfg import configurations 
-cfg = configurations['parse']
 
+obsfreq = 10000
+cfg = configurations['parse']
 
 # -----------------------
 # command line flags definition, using absl library
@@ -326,7 +327,7 @@ def setup_experiment_inputs(
       config=config,
       ActorCls=functools.partial(
         basics.BasicActor,
-        observers=[QObserver(period=1 if debug else 10000)],
+        observers=[QObserver(period=1 if debug else obsfreq)],
         ),
       LossFn=q_learning.R2D2LossFn(
           discount=config.discount,

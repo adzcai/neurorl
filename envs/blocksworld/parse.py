@@ -15,12 +15,20 @@ from acme import types, specs
 from typing import Any, Dict, Optional
 import tree
 
+'''
+TODO
+	differentiate max blocks in planning vs max blocks in a single stack/brain
+	implement __sample_from_curriculum
+	consider whether to wipe head instead of silence
+'''
+
 cfg = configurations['parse']
 
 class Simulator():
 	# brain only represent 1 stack
 	def __init__(self, 
-				max_blocks = cfg['max_blocks'], # max number of blocks to parse
+				hyper_max_blocks = cfg['hyper_max_blocks'], # max num blocks in planning puzzle
+				max_blocks = cfg['max_blocks'], # max num of blocks in each stack
 				max_steps = cfg['max_steps'],
 				action_cost = cfg['action_cost'],
 				reward_decay_factor = cfg['reward_decay_factor'],
@@ -29,6 +37,7 @@ class Simulator():
 				area_status = cfg['area_status'],
 				verbose=False):
 		self.all_areas, self.head, self.node_areas, self.relocated_area, self.blocks_area = utils.init_simulator_areas()
+		self.hyper_max_blocks = hyper_max_blocks
 		self.max_blocks = max_blocks
 		self.max_steps = max_steps # max steps allowed in episode
 		self.action_cost = action_cost
@@ -40,7 +49,7 @@ class Simulator():
 		self.num_areas = len(self.all_areas)
 		self.action_dict = self.create_action_dictionary() 
 		self.num_actions = len(self.action_dict)
-		self.num_assemblies = self.max_blocks # total number of assemblies ever created
+		self.num_assemblies = self.hyper_max_blocks # total number of assemblies ever created
 
 		
 	def __create_episode(self, shuffle, difficulty_mode, cur_curriculum_level):
@@ -61,7 +70,7 @@ class Simulator():
 			raise ValueError(f"unrecognized difficulty mode {difficulty_mode} (type {type(difficulty_mode)})")
 		assert num_blocks <= self.max_blocks, \
 			f"number of actual blocks to parse {num_blocks} should be smaller than max_blocks {self.max_blocks}"
-		stack = list(range(num_blocks)) # the actual blocks in the stack, to be filled
+		stack = random.sample(list(range(self.hyper_max_blocks)), num_blocks) # the actual blocks in the stack
 		if shuffle:
 			random.shuffle(stack)
 		goal[:num_blocks] = stack
@@ -87,7 +96,7 @@ class Simulator():
 		self.all_correct = False # if the most recent readout has everything correct
 		self.correct_record = np.zeros_like(self.goal) # binary record for how many blocks are ever correct in the episode
 		self.current_time = 0 # current step in the episode
-		self.num_assemblies = self.max_blocks
+		self.num_assemblies = self.hyper_max_blocks
 		info = None
 		return self.state.copy(), info
 
@@ -180,7 +189,7 @@ class Simulator():
 		elif action_name == "activate_block":
 			bidx = int(self.state[state_change_tuple[0]]) # currently activated block id
 			newbidx = int(bidx) + state_change_tuple[1] # the new block id to be activated (prev -1 or next +1)
-			if newbidx < 0 or newbidx >= self.max_blocks: # BAD, new block id is out of range
+			if newbidx < 0 or newbidx >= self.hyper_max_blocks: # BAD, new block id is out of range
 				reward -= self.action_cost
 			else: # GOOD, valid activate
 				self.state[state_change_tuple[0]] = newbidx # update block id in state vec
@@ -322,13 +331,13 @@ class Simulator():
 				elif istatus==1: # encode number of blocks-connected assemblies in this area
 					area_to_stateidx[area_name][status_name] = state_vector_idx # area -> state idx
 					if area_name==self.blocks_area:
-						state_vec.append(self.max_blocks)
+						state_vec.append(self.hyper_max_blocks)
 					else:
 						state_vec.append(0)
 				elif istatus==2: # encode number of total assemblies in this area
 					area_to_stateidx[area_name][status_name] = state_vector_idx # area -> state idx
 					if area_name==self.blocks_area:
-						state_vec.append(self.max_blocks)
+						state_vec.append(self.hyper_max_blocks)
 					else:
 						state_vec.append(0)
 				else:
@@ -366,7 +375,7 @@ class Simulator():
 											area_to_stateidx["is_last_block"]] + area_to_stateidx["current_stack"], \
 											[-1, -1, -1, -1, 0] + [-1]*self.max_blocks)
 		# initialize assembly dict for blocks area, other areas will be updated during project
-		assembly_dict[self.blocks_area] = [[[],[]] for _ in range(self.max_blocks)] 
+		assembly_dict[self.blocks_area] = [[[],[]] for _ in range(self.hyper_max_blocks)] 
 		return np.array(state_vec, dtype=np.float32), \
 				action_to_statechange, \
 				area_to_stateidx, \
