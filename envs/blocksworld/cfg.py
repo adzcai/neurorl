@@ -1,13 +1,16 @@
 configurations = {
-'mental_blocks':
+'skip_relocated': True,
+'stack_max_blocks': 7, # max num of blocks in any stack
+'puzzle_max_blocks': 10, # max num blocks in a planning puzzle (across all stacks)
+'episode_max_reward': 1, # max reward for solving the entire episode correctly
+
+'plan':
 	{
-	'cfg': 'mental_blocks',
-	'skip_relocated': True , # skip area RELOCATED
-	'max_stacks': 2 , # maximum number of stacks allowed
-	'max_blocks': 7 , # maximum number of blocks allowed in each stack
+	'cfg': 'plan',
+	'puzzle_max_stacks': 2 , # maximum number of stacks allowed in a puzzle
 	'max_steps': 100 , # maximum number of actions allowed in each episode
 	'base_block_reward': 3 , # base reward for getting 1 block correct, cumulates with more blocks correct
-	'block_reward_decay_factor': 1.2 , # discount factor for subsequently correct blocks, the larger the faster the decay
+	'reward_decay_factor': 1.2 , # discount factor for subsequently correct blocks, the larger the faster the decay
 	'action_cost': 1e-3 , # cost for performing any action
 	'curriculum': 2 , # current difficulty level to focus on in curriculum training. None for fixed curriculum, 2 for dynamic curriculum
 	'episode_reward_threshold': 1.4 , # current upper episode reward threshold to proceed to next curriculum level
@@ -25,14 +28,10 @@ configurations = {
 'parse':
 	{
 	'cfg': 'parse',
-	'hyper_max_blocks': 10, # maximum number of blocks allowed in the entire puzzle (across all stacks)
 	'max_steps': 200, # maximum number of actions allowed in each episode
 	'reward_decay_factor': 0.9, # reward discount factor, descending (first index is most rewarding) if 0 < factor < 1, ascending if factor > 1
 	'action_cost': 1e-3, # cost for performing any action
-	'max_blocks': 7, # maximum number of blocks allowed in each stack
 	'max_assemblies': 50, # maximum number of assemblies for each area in the state representation
-	'episode_max_reward': 1, # base reward for getting 1 block correct, cumulates with more blocks correct
-	'skip_relocated': True, # skip area RELOCATED
 	'num_fibers': None, # number of fibers in the brain, will be filled once env is created
 	'num_areas': None, # number of areas in the brain, will be filled once env is created
 	'num_actions': None, # number of actions, will be filled once env is created

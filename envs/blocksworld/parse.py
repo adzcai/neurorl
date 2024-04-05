@@ -17,9 +17,10 @@ import tree
 
 '''
 TODO
-	differentiate max blocks in planning vs max blocks in a single stack/brain
 	implement __sample_from_curriculum
-	consider whether to wipe head instead of silence
+DONE
+	differentiate max blocks in planning vs max blocks in a single stack/brain
+	consider whether to wipe head instead of silence (no)
 '''
 
 cfg = configurations['parse']
@@ -27,18 +28,18 @@ cfg = configurations['parse']
 class Simulator():
 	# brain only represent 1 stack
 	def __init__(self, 
-				hyper_max_blocks = cfg['hyper_max_blocks'], # max num blocks in planning puzzle
-				max_blocks = cfg['max_blocks'], # max num of blocks in each stack
+				puzzle_max_blocks = configurations['puzzle_max_blocks'], # max num blocks in planning puzzle
+				stack_max_blocks = configurations['stack_max_blocks'], # max num of blocks in each stack
+				episode_max_reward = configurations['episode_max_reward'],
+				skip_relocated = configurations['skip_relocated'],
 				max_steps = cfg['max_steps'],
 				action_cost = cfg['action_cost'],
 				reward_decay_factor = cfg['reward_decay_factor'],
-				episode_max_reward = cfg['episode_max_reward'],
-				skip_relocated = cfg['skip_relocated'],
 				area_status = cfg['area_status'],
 				verbose=False):
 		self.all_areas, self.head, self.node_areas, self.relocated_area, self.blocks_area = utils.init_simulator_areas()
-		self.hyper_max_blocks = hyper_max_blocks
-		self.max_blocks = max_blocks
+		self.puzzle_max_blocks = puzzle_max_blocks
+		self.stack_max_blocks = stack_max_blocks
 		self.max_steps = max_steps # max steps allowed in episode
 		self.action_cost = action_cost
 		self.reward_decay_factor = reward_decay_factor
@@ -49,35 +50,35 @@ class Simulator():
 		self.num_areas = len(self.all_areas)
 		self.action_dict = self.create_action_dictionary() 
 		self.num_actions = len(self.action_dict)
-		self.num_assemblies = self.hyper_max_blocks # total number of assemblies ever created
+		self.num_assemblies = self.puzzle_max_blocks # total number of assemblies ever created
 
 		
 	def __create_episode(self, shuffle, difficulty_mode, cur_curriculum_level):
-		goal = [None] * self.max_blocks # dummy goal template, to be filled
+		goal = [None] * self.stack_max_blocks # dummy goal template, to be filled
 		num_blocks = None # actual number of blocks in the stack, to be modified
 		if difficulty_mode=='curriculum':
 			assert cur_curriculum_level!=None, f"requested curriculum but current level is not given"
 			num_blocks = self.__sample_from_curriculum(cur_curriculum_level)
 		elif difficulty_mode=='uniform' or (type(difficulty_mode)==int and difficulty_mode==0): # uniform mode
-			num_blocks = random.randint(1, self.max_blocks)
+			num_blocks = random.randint(1, self.stack_max_blocks)
 		elif type(difficulty_mode)==bool and (difficulty_mode==False): # default max blocks to parse
-			num_blocks = self.max_blocks
+			num_blocks = self.stack_max_blocks
 		elif type(difficulty_mode)==int:
-			assert 1<=difficulty_mode<=self.max_blocks, \
-				f"invalid difficulty mode: {difficulty_mode}, should be 'curriculum', or 0, or values in [1, {self.max_blocks}]"
+			assert 1<=difficulty_mode<=self.stack_max_blocks, \
+				f"invalid difficulty mode: {difficulty_mode}, should be 'curriculum', or 0, or values in [1, {self.stack_max_blocks}]"
 			num_blocks = difficulty_mode
 		else:
 			raise ValueError(f"unrecognized difficulty mode {difficulty_mode} (type {type(difficulty_mode)})")
-		assert num_blocks <= self.max_blocks, \
-			f"number of actual blocks to parse {num_blocks} should be smaller than max_blocks {self.max_blocks}"
-		stack = random.sample(list(range(self.hyper_max_blocks)), num_blocks) # the actual blocks in the stack
+		assert num_blocks <= self.stack_max_blocks, \
+			f"number of actual blocks to parse {num_blocks} should be smaller than stack_max_blocks {self.stack_max_blocks}"
+		stack = random.sample(list(range(self.puzzle_max_blocks)), num_blocks) # the actual blocks in the stack
 		if shuffle:
 			random.shuffle(stack)
 		goal[:num_blocks] = stack
 		return num_blocks, goal
 
 	def __sample_from_curriculum(self, cur_curriculum_level):
-		assert 1 <= curriculum <= self.max_blocks
+		assert 1 <= curriculum <= self.stack_max_blocks
 		level = curriculum
 		return level
 
@@ -96,7 +97,7 @@ class Simulator():
 		self.all_correct = False # if the most recent readout has everything correct
 		self.correct_record = np.zeros_like(self.goal) # binary record for how many blocks are ever correct in the episode
 		self.current_time = 0 # current step in the episode
-		self.num_assemblies = self.hyper_max_blocks
+		self.num_assemblies = self.puzzle_max_blocks
 		info = None
 		return self.state.copy(), info
 
@@ -189,7 +190,7 @@ class Simulator():
 		elif action_name == "activate_block":
 			bidx = int(self.state[state_change_tuple[0]]) # currently activated block id
 			newbidx = int(bidx) + state_change_tuple[1] # the new block id to be activated (prev -1 or next +1)
-			if newbidx < 0 or newbidx >= self.hyper_max_blocks: # BAD, new block id is out of range
+			if newbidx < 0 or newbidx >= self.puzzle_max_blocks: # BAD, new block id is out of range
 				reward -= self.action_cost
 			else: # GOOD, valid activate
 				self.state[state_change_tuple[0]] = newbidx # update block id in state vec
@@ -208,7 +209,7 @@ class Simulator():
 				assert not utils.is_last_block(self.assembly_dict, self.head, top_area, topa, self.blocks_area), \
 					f"is_last_block should be False after silencing head"
 				readout = utils.synthetic_readout(self.assembly_dict, self.last_active_assembly, self.head, len(self.goal), self.blocks_area)
-				assert readout == [None]*self.max_blocks, f"readout {readout} should all be None after silencing head" 
+				assert readout == [None]*self.stack_max_blocks, f"readout {readout} should all be None after silencing head" 
 				r, self.all_correct, self.correct_record = utils.calculate_readout_reward(readout, self.goal, self.correct_record, self.unit_reward, self.reward_decay_factor)
 				reward += r
 				for sidx, sval in zip(state_change_tuple[0], state_change_tuple[1]):
@@ -234,8 +235,8 @@ class Simulator():
 				goal stack (copy of self.goal, replace None by -1),
 				fiber inhibition status (initialized as all closed 0s),
 				last activated assembly idx in the area (initialized as all -1s), 
-				number of blocks-connected assemblies in each area (initialized as 0s, or max_blocks for BLOCKS area),
-				number of all assemblies in each area (initialized as 0s, or max_blocks for BLOCKS area),
+				number of blocks-connected assemblies in each area (initialized as 0s, or puzzle_max_blocks for BLOCKS area),
+				number of all assemblies in each area (initialized as 0s, or puzzle_max_blocks for BLOCKS area),
 				top block node area (initialized as -1), 
 				top block assembly idx in node area (initialized as -1), 
 				top block idx (initialized as -1),
@@ -271,13 +272,13 @@ class Simulator():
 		last_active_assembly = {} # {area: assembly_idx}
 		# encode current stack 
 		area_to_stateidx["current_stack"] = []
-		for _ in range(self.max_blocks):
+		for _ in range(self.stack_max_blocks):
 			state_vec.append(-1)
 			area_to_stateidx["current_stack"].append(state_vector_idx)
 			state_vector_idx += 1
 		# encode goal stack
 		area_to_stateidx["goal_stack"] = []
-		for ib in range(self.max_blocks):
+		for ib in range(self.stack_max_blocks):
 			if self.goal[ib]==None:  # filler for empty block
 				state_vec.append(-1)
 			else:
@@ -331,13 +332,13 @@ class Simulator():
 				elif istatus==1: # encode number of blocks-connected assemblies in this area
 					area_to_stateidx[area_name][status_name] = state_vector_idx # area -> state idx
 					if area_name==self.blocks_area:
-						state_vec.append(self.hyper_max_blocks)
+						state_vec.append(self.puzzle_max_blocks)
 					else:
 						state_vec.append(0)
 				elif istatus==2: # encode number of total assemblies in this area
 					area_to_stateidx[area_name][status_name] = state_vector_idx # area -> state idx
 					if area_name==self.blocks_area:
-						state_vec.append(self.hyper_max_blocks)
+						state_vec.append(self.puzzle_max_blocks)
 					else:
 						state_vec.append(0)
 				else:
@@ -373,9 +374,9 @@ class Simulator():
 		action_to_statechange[action_idx] = ([area_to_stateidx[self.head][self.area_status[0]], \
 											area_to_stateidx["top_area"], area_to_stateidx["top_assembly"], area_to_stateidx["top_block"],\
 											area_to_stateidx["is_last_block"]] + area_to_stateidx["current_stack"], \
-											[-1, -1, -1, -1, 0] + [-1]*self.max_blocks)
+											[-1, -1, -1, -1, 0] + [-1]*self.stack_max_blocks)
 		# initialize assembly dict for blocks area, other areas will be updated during project
-		assembly_dict[self.blocks_area] = [[[],[]] for _ in range(self.hyper_max_blocks)] 
+		assembly_dict[self.blocks_area] = [[[],[]] for _ in range(self.puzzle_max_blocks)] 
 		return np.array(state_vec, dtype=np.float32), \
 				action_to_statechange, \
 				area_to_stateidx, \
@@ -425,15 +426,15 @@ class Simulator():
 
 
 
-def test_simulator(max_blocks=7, expert=True, repeat=10, verbose=False):
+def test_simulator(stack_max_blocks=7, expert=True, repeat=10, verbose=False):
 	import time
-	sim = Simulator(max_blocks=max_blocks, verbose=verbose)
+	sim = Simulator(stack_max_blocks=stack_max_blocks, verbose=verbose)
 	pprint.pprint(sim.action_dict)
 	start_time = time.time()
-	for difficulty in range(max_blocks+1):
+	for difficulty in range(sim.stack_max_blocks+1):
 		for _ in range(repeat):
 			print(f'\n\n------------ repeat {repeat}, state after reset\t{sim.reset(shuffle=True, difficulty_mode=difficulty)[0]}')
-			expert_demo = utils.parse_expert_demo(sim.goal, sim.num_blocks) if expert else None
+			expert_demo = utils.expert_demo_parse(sim.goal, sim.num_blocks) if expert else None
 			rtotal = 0 # total reward of episode
 			nsteps = sim.max_steps if (not expert) else len(expert_demo)
 			print(f"expert demo {expert_demo}")
@@ -549,8 +550,8 @@ def _convert_to_spec(space: Any,
 			num_values=max_val+1,
 			name=name
 		)
-	elif isinstance(space, np.ndarray): # observation
-		min_val, max_val = space.min(), cfg['max_assemblies']
+	elif isinstance(space, np.ndarray): # observation/state
+		min_val, max_val = space.min(), configurations['parse']['max_assemblies']
 		try:
 			assert name=='observation'
 		except:	
@@ -575,7 +576,7 @@ def _convert_to_spec(space: Any,
 
 class Test(test_utils.EnvironmentTestMixin, absltest.TestCase):
 	def make_object_under_test(self):
-		sim = Simulator(max_blocks=7)
+		sim = Simulator(stack_max_blocks=7)
 		return EnvWrapper(sim)
 	def make_action_sequence(self):
 		for _ in range(200):
@@ -584,7 +585,7 @@ class Test(test_utils.EnvironmentTestMixin, absltest.TestCase):
 if __name__ == "__main__":
 
 	# random.seed(1)
-	test_simulator(max_blocks=7, expert=True, repeat=100, verbose=False)
+	test_simulator(stack_max_blocks=7, expert=True, repeat=100, verbose=False)
 	
 	absltest.main()
 

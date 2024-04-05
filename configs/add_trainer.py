@@ -5,19 +5,19 @@ module load python/3.10.12-fasrc01
 mamba activate neurorl
 
 // launch parallel job
-python configs/parse_trainer.py \
+python configs/add_trainer.py \
   --search='initial' \
   --parallel='sbatch' \
   --num_actors=1 \
   --use_wandb=True \
   --partition=gpu_test \
   --wandb_entity=yichenli \
-  --wandb_project=parse \
+  --wandb_project=add \
   --run_distributed=True \
   --time=0-12:00:00 
 
 // test in interactive session
-python configs/parse_trainer.py \
+python configs/add_trainer.py \
   --search='initial' \
   --parallel='none' \
   --run_distributed=True \
@@ -60,11 +60,11 @@ import library.parallel as parallel
 import library.utils as utils
 import library.networks as networks
 
-from envs.blocksworld import parse
+from envs.blocksworld import add
 from envs.blocksworld.cfg import configurations 
 
 obsfreq = 10000
-cfg = configurations['parse']
+cfg = configurations['add']
 
 # -----------------------
 # command line flags definition, using absl library
@@ -88,7 +88,7 @@ State = jax.Array
 def observation_encoder(
     inputs: acme_wrappers.observation_action_reward.OAR,
     num_actions: int,
-    max_assemblies: int=cfg['max_assemblies']):
+    max_assemblies: int):
   """
   A neural network to encode the environment observation / state.
   In the case of parsing blocks, 
@@ -139,7 +139,8 @@ def make_qlearning_networks(
 
     observation_fn = functools.partial(
       observation_encoder, 
-      num_actions=num_actions)
+      num_actions=num_actions,
+      max_assemblies=configurations['parse']['max_assemblies'])
     return q_learning.R2D2Arch(
       torso=hk.to_module(observation_fn)('obs_fn'),
       memory=networks.DummyRNN(),  # nothing happens
@@ -276,11 +277,11 @@ def make_environment(seed: int ,
   del evaluation
   
   # create dm_env
-  sim = parse.Simulator()
+  sim = add.Simulator()
   sim.reset()
   cfg['num_actions'] = sim.num_actions
   cfg['action_dict'] = sim.action_dict
-  env = parse.EnvWrapper(sim)
+  env = add.EnvWrapper(sim)
 
   # add acme wrappers
   wrapper_list = [
@@ -552,7 +553,7 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['4P']),
+            "group": tune.grid_search(['1A']),
             "num_steps": tune.grid_search([200e6]),
 
             "max_grad_norm": tune.grid_search([80.0]),

@@ -14,6 +14,7 @@ def init_simulator_areas(max_stacks=1,
 							blocks_area="BLOCKS"):
 	'''
 	Initialize the list of area names in the brain, and the head area name.
+	Intended for parse, remove, add Simulator.
 	Input:
 		max_stacks: (int = 1)
 			max number of stacks that a brain can represent. 
@@ -87,10 +88,7 @@ def go_activate_block(curblock, newblock, action_goto_next=[19], action_goto_pre
 	return actions
 
 
-def top(assembly_dict, 
-		last_active_assembly, 
-		head, 
-		blocks_area="BLOCKS"):
+def top(assembly_dict, last_active_assembly, head, blocks_area="BLOCKS"):
 	'''
 	Get the top area in the brain, this will be the area that directly connects from head area.
 	Input: (can be retrieved from Simulator)
@@ -126,11 +124,7 @@ def top(assembly_dict,
 	return None, None, None
 
 
-def is_last_block(assembly_dict, 
-					head, 
-					top_area, 
-					top_area_a, 
-					blocks_area="BLOCKS"):
+def is_last_block(assembly_dict, head, top_area, top_area_a, blocks_area="BLOCKS"):
 	'''
 	Check if top_area_a assembly in top_area represents the last block in the chain
 	'''
@@ -145,11 +139,11 @@ def is_last_block(assembly_dict,
 	return True
 
 
-def all_fiber_closed(state, 
-						stateidx_to_fibername):
+def all_fiber_closed(state, stateidx_to_fibername):
 	'''
 	Check whether all fibers in the state vector are closed.
 	Input:
+		state: (list or numpy array of float32)
 		stateidx_to_fibername: (dict)
 			mapping state vector index to fiber between two areas
 			{state idx: (area1, area2)}
@@ -195,11 +189,6 @@ def synthetic_readout(assembly_dict,
 	area, area_a = None, None # initiate next area to decode from
 	if len(areas_from_head) != 0 and len(aidx_from_head)!= 0: # if head assembly is connected with a node area
 		area, area_a = areas_from_head[0], aidx_from_head[0] # next area to read from
-	# print("------inside readout")
-	# pprint.pprint(assembly_dict)
-	# pprint.pprint(last_active_assembly)
-	# print(area, area_a)
-	# print("------end readout")
 	for iblock in range(readout_length): 
 		if area==None and area_a==None: # if current area is not available
 			readout.append(None)
@@ -224,9 +213,7 @@ def synthetic_readout(assembly_dict,
 	return readout
 
 
-def check_prerequisite(arr, 
-						k, 
-						value=1):
+def check_prerequisite(arr, k, value=1):
 	'''
 	Check if the first k elements in arr are all equal to value.
 	Input: 
@@ -555,15 +542,18 @@ def synthetic_project(state,
 	return assembly_dict, last_active_assembly, num_assemblies
 
 
-def parse_expert_demo(goal, num_blocks):
+def expert_demo_parse(goal, num_blocks):
 	'''
+	Generate random expert demonstration for parsing a stack of blocks.
 	Input:
-		goal: (list of length max_blocks)
+		goal: (list of length stack_max_blocks)
+			consists of nonnegative ints (block ids) and None (empty block position)
+			list as top to bottom block in the stack
 		num_blocks: (int)
 			valid number of blocks in the parse goal
 	Return:
 		expert_demo: (list of int)
-			list of expert actions to solve the puzzle.
+			list of expert actions to parse the blocks
 	'''
 	stack = goal[:num_blocks]
 	actions = []
@@ -629,7 +619,16 @@ def parse_expert_demo(goal, num_blocks):
 		imodule += 1
 	
 
-def remove_expert_demo(simulator):
+def expert_demo_remove(simulator):
+	'''
+	Generate random expert demonstration for removing a block from a stack.
+	Input:
+		simulator: (remove.Simulator)
+			simulator.goal (length stack_max_blocks, ints and None) is goal stack after removing the top
+	Return:
+		expert_demo: (list of int)
+			list of expert actions to remove a block
+	'''
 	final_actions = []
 	top_area_name, top_area_a, top_block_idx = top(simulator.assembly_dict, simulator.last_active_assembly, simulator.head, simulator.blocks_area)
 	# first check if any fiber needs to be inhibited
@@ -720,7 +719,17 @@ def remove_expert_demo(simulator):
 	return final_actions
 
 
-def add_expert_demo(simulator):
+def expert_demo_add(simulator):
+	'''
+	Generate random expert demonstration for adding a block to a stack
+	Input:
+		simulator: (add.Simulator)
+			will contain attribute simulator.newblock that represents new block id
+			and simulator.goal (length stack_max_blocks, ints and None) of goal stack after adding
+	Return:
+		expert_demo: (list of int)
+			list of expert actions to add a block
+	'''
 	final_actions = []
 	top_area_name, top_area_a, top_block_idx = top(simulator.assembly_dict, simulator.last_active_assembly, simulator.head, simulator.blocks_area)
 	# first check if any fiber needs to be inhibited
@@ -872,3 +881,165 @@ def add_expert_demo(simulator):
 	random.shuffle(tmp_actions)
 	final_actions += tmp_actions
 	return final_actions
+
+
+def expert_demo_plan(action_dict, input_stacks, goal_stacks, puzzle_max_stacks, puzzle_max_blocks, stack_max_blocks):
+	'''
+	use the most naive algorithm to create expert demo for planning: remove all blocks to table, and reassemble them in order
+	'''
+	final_actions = []
+	# first need to parse input and goal
+	action = "parse_input"
+	final_actions.append( list(action_dict.keys())[list(action_dict.values()).index(action)] )
+	action = "parse_goal"
+	final_actions.append( list(action_dict.keys())[list(action_dict.values()).index(action)] )
+	# remove everything from cur stacks
+	table = [] # a cache storing blocks on the table
+	cur_pointer = 0 # current pointer to cur stacks
+	table_pointer = 0 # current pointer to table stacks
+	for istack in range(puzzle_max_stacks):
+		for jblock in range(stack_max_blocks): # iterating from top to bottom
+			if input_stacks[istack][jblock]== -1: # have not reached valid block yet
+				continue
+			action = "remove"
+			final_actions.append( list(action_dict.keys())[list(action_dict.values()).index(action)] )
+			table.append(input_stacks[istack][jblock]) # record the blocks put on table
+		if puzzle_max_stacks>1 and istack!=puzzle_max_stacks-1: # move to next stack if applicable
+			action = "next_stack"
+			final_actions.append( list(action_dict.keys())[list(action_dict.values()).index(action)] )
+			cur_pointer += 1
+	# add blocks according to goal
+	for istack in range(puzzle_max_stacks):
+		for jblock in range(stack_max_blocks-1, -1, -1): # iterating from bottom to top in each stack
+			if goal_stacks[istack][jblock] == -1: # no more blocks in this stack
+				break # go to next goal stack
+			blocktoadd = goal_stacks[istack][jblock]
+			loc = table.index(blocktoadd) # table stack idx containing this block
+			if loc - table_pointer > 0: # should move to the right to reach the table stack
+				for _ in range(loc - table_pointer):
+					action = "next_table"
+					final_actions.append( list(action_dict.keys())[list(action_dict.values()).index(action)] )
+			elif loc - table_pointer < 0:
+				for _ in range(table_pointer - loc):
+					action = "previous_table"
+					final_actions.append( list(action_dict.keys())[list(action_dict.values()).index(action)] )
+			table_pointer = loc # table pointer is now moved to the table stack to be added
+			if istack - cur_pointer > 0: # cur stack pointer need to move to the right
+				for _ in range(istack - cur_pointer):
+					action = "next_stack"
+					final_actions.append( list(action_dict.keys())[list(action_dict.values()).index(action)] )
+			elif istack - cur_pointer < 0: # cur stack pointer need to move to the left
+				for _ in range(cur_pointer - istack):
+					action = "previous_stack"
+					final_actions.append( list(action_dict.keys())[list(action_dict.values()).index(action)] )
+			cur_pointer = istack # cur pointer moved to the stack to be added
+			action = "add" # add the block 
+			final_actions.append( list(action_dict.keys())[list(action_dict.values()).index(action)] )
+	return final_actions # list of integers representing actions
+
+
+def sample_random_puzzle(puzzle_max_stacks, puzzle_max_blocks, stack_max_blocks,
+						  difficulty=None, curriculum=None):
+	'''
+	Create a random puzzle for blocksworld planning task.
+	Input
+		puzzle_max_stacks: (int) 
+			max number of stacks possible in the initial/goal configuration
+		puzzle_max_blocks: (int)
+			max number of blocks possible in the initial/goal configuration
+		stack_max_blocks: (int)
+			max number of blocks in a stack
+		difficulty: (int=None) 
+			the specific number of blocks to have in the initial/goal configuration.
+		curriculum: (int [2,...,puzzle_max_blocks] = None)
+			current curriculum, which determines the distribution of total number of blocks in initial/goal config.
+	Output
+		puzzle_num_blocks: (int) 
+			total number of blocks in the initial or goal config
+		input_stacks: (list of list)
+			initial configuration, each inner list is a stack representation, read from bottom to top. TODO
+		goal_stacks: (list of list)
+	'''
+	
+	while True:
+		weights = [0.1, 0.1, 0.2, 0.2, 0.2, 0.2] # uniform adjusted to puzzle space
+		if curriculum==None: # static curriculum
+			weights = [0.1, 0.1, 0.2, 0.2, 0.2, 0.2] # uniform adjusted to puzzle space
+		elif curriculum == 2: # dynamic curriculum
+			weights = [1, 0, 0, 0, 0, 0]
+		elif curriculum == 3:
+			weights = [0.3, 0.7, 0, 0, 0, 0]
+		elif curriculum == 4:
+			weights = [0.1, 0.2, 0.7, 0, 0, 0]
+		elif curriculum == 5:
+			weights = [0.03, 0.07, 0.15, 0.75, 0, 0]
+		elif curriculum == 6:
+			weights = [0.01, 0.01, 0.03, 0.15, 0.8, 0]
+		elif curriculum == 7:
+			weights = [0.005, 0.015, 0.020, 0.035, 0.075, 0.85]
+		elif curriculum == 0: # all levels finished, stabalize training 
+			weights = [0.05, 0.05, 0.2, 0.2, 0.25, 0.25]
+		puzzle_num_blocks = random.choice(list(range(2, puzzle_max_blocks+1)), p=weights) if difficulty==None else difficulty
+		# input stacks
+		available_blocks = list(range(puzzle_num_blocks)) # pool of all block ids for this puzzle
+		input_stacks = []
+		for _ in range(puzzle_max_stacks):
+			if len(available_blocks)==0:
+				continue
+			num_blocks_istack = random.choice(list(range( min(len(available_blocks), stack_max_blocks)+1 ))) 
+			curstack = []
+			for _ in range(num_blocks_istack): # sample block id one by one
+				curblock = random.choice(available_blocks)
+				curstack.append(curblock)
+				available_blocks.remove(curblock)
+			if curstack!=[]: # gathered some blocks for this stack
+				input_stacks.append(curstack)
+		if len(available_blocks) != 0: # remaining blocks from the pool will be added
+			random.shuffle(available_blocks)
+			istack = 0  # ith input stack to check
+			while True: # spread the remaining blocks to all stacks of input
+				istack = istack % puzzle_max_stacks 
+				if len(input_stacks) <= istack: # not that many input stacks yet
+					input_stacks.append([]) # add new input stack
+				assert len(input_stacks[istack]) <= stack_max_blocks, \
+					f"puzzle input stack {istack}: {input_stacks[istack]} has more than stack_max_blocks ({stack_max_blocks}) items"
+				if len(input_stacks[istack]) < stack_max_blocks: # this input stack has spare space
+					ab = available_blocks.pop() # add a remaining block
+					input_stacks[istack].append(ab)
+				istack += 1 # go to next input stack
+				if len(available_blocks)==0:
+					break # no more remaining blocks available, done
+		# goal stacks
+		available_blocks = list(range(puzzle_num_blocks))
+		goal_stacks = []
+		for _ in range(puzzle_max_stacks):
+			if len(available_blocks)==0:
+				continue
+			num_blocks_istack = random.choice(list(range(len(available_blocks))))
+			curstack = []
+			for _ in range(num_blocks_istack):
+				curblock = random.choice(available_blocks)
+				curstack.append(curblock)
+				available_blocks.remove(curblock)
+			if curstack!=[]:
+				goal_stacks.append(curstack)
+		if len(available_blocks) != 0: # remaining blocks will be added to the last stack
+			random.shuffle(available_blocks)
+			istack = 0  # ith input stack to check
+			while True: # spread the remaining blocks to all stacks of input
+				istack = istack % puzzle_max_stacks 
+				if len(input_stacks) <= istack: # not that many input stacks yet
+					input_stacks.append([]) # add new input stack
+				assert len(input_stacks[istack]) <= stack_max_blocks, \
+					f"puzzle input stack {istack}: {input_stacks[istack]} has more than stack_max_blocks ({stack_max_blocks}) items"
+				if len(input_stacks[istack]) < stack_max_blocks: # this input stack has spare space
+					ab = available_blocks.pop() # add a remaining block
+					input_stacks[istack].append(ab)
+				istack += 1 # go to next input stack
+				if len(available_blocks)==0:
+					break # no more remaining blocks available, done		
+		assert (len(input_stacks) <= puzzle_max_stacks) and (len(goal_stacks) <= puzzle_max_stacks),\
+			f"puzzle input {input_stacks} and goal {goal_stacks} should each have fewer than {puzzle_max_stacks} stacks"
+		# found valid puzzle config, return
+		if input_stacks != goal_stacks: 
+			return puzzle_num_blocks, input_stacks, goal_stacks

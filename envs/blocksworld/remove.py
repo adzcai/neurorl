@@ -42,11 +42,11 @@ class Simulator(parse.Simulator):
 
 	def __create_parse_goal(self, shuffle=True):
 		# assuming uniform parse goal 
-		goal = [None] * self.max_blocks # dummy goal template, to be filled
-		num_blocks = random.randint(1, self.max_blocks)
-		assert num_blocks <= self.max_blocks, \
-			f"number of actual blocks to parse {num_blocks} should be smaller than max_blocks {self.max_blocks}"
-		stack = random.sample(list(range(self.hyper_max_blocks)), num_blocks) # the actual blocks in the stack
+		goal = [None] * self.stack_max_blocks # dummy goal template, to be filled
+		num_blocks = random.randint(1, self.stack_max_blocks)
+		assert num_blocks <= self.stack_max_blocks, \
+			f"number of actual blocks to parse {num_blocks} should be smaller than stack_max_blocks {self.stack_max_blocks}"
+		stack = random.sample(list(range(self.puzzle_max_blocks)), num_blocks) # the actual blocks in the stack
 		if shuffle:
 			random.shuffle(stack)
 		goal[:num_blocks] = stack
@@ -63,7 +63,7 @@ class Simulator(parse.Simulator):
 				whether to shuffle parse goal (parse goal will be of uniform length)
 			difficulty_mode: {'uniform', 'curriculum'}
 				determines number of blocks removed from parsed goal
-			cur_curriculum_level: {None, 0, 1, ..., self.max_blocks-1}
+			cur_curriculum_level: {None, 0, 1, ..., self.stack_max_blocks-1}
 				if not None, determines number of blocks removed from parse goal
 		Return:
 			state: (numpy array with float32)
@@ -77,10 +77,10 @@ class Simulator(parse.Simulator):
 		self.all_correct = False # if the most recent readout has everything correct
 		self.correct_record = np.zeros_like(self.goal) # binary record for how many blocks are ever correct in the episode
 		self.current_time = 0 # current step in the episode
-		self.num_assemblies = self.hyper_max_blocks
+		self.num_assemblies = self.puzzle_max_blocks
 		# first parse the stack
-		parse_actions = utils.parse_expert_demo(self.goal, self.num_blocks)
-		print(f"\n\nparsing {self.goal}...") 
+		parse_actions = utils.expert_demo_parse(self.goal, self.num_blocks)
+		# print(f"\n\nparsing {self.goal}...") 
 		for t, a in enumerate(parse_actions):
 			self.state, r, terminated, truncated, info = super().step(a)
 		# then removing arbitrary number of blocks from the stack
@@ -91,20 +91,20 @@ class Simulator(parse.Simulator):
 			self.all_correct = False # if the most recent readout has everything correct
 			self.correct_record = np.zeros_like(self.goal) # binary record for how many blocks are ever correct in the episode
 			self.current_time = 0 # current step in the episode
-			for ib in range(self.max_blocks): # update state vector to encode new goal
+			for ib in range(self.stack_max_blocks): # update state vector to encode new goal
 				if self.goal[ib]==None:  # filler for empty block
 					self.state[self.area_to_stateidx['goal_stack'][ib]] = -1
 				else:
 					self.state[self.area_to_stateidx['goal_stack'][ib]] = self.goal[ib]
-			remove_actions = utils.remove_expert_demo(self) # actions to remove this block
-			print(f"\tremoving for goal {self.goal}, remove_actions {remove_actions}")
+			remove_actions = utils.expert_demo_remove(self) # actions to remove this block
+			# print(f"\tremoving for goal {self.goal}, remove_actions {remove_actions}")
 			for t, a in enumerate(remove_actions):
 				self.state, r, terminated, truncated, info = super().step(a)
 				# print(f"\tt={t}, a={self.action_dict[a]}, r={r}, state={self.state}, terminated={terminated}")
 		self.num_blocks -= nremove # update the actual number of blocks now
 		# the real goal is removing 1 block from the current stack
 		self.goal = self.goal[1:] + [None]
-		for ib in range(self.max_blocks): # update state vector to encode new goal
+		for ib in range(self.stack_max_blocks): # update state vector to encode new goal
 				if self.goal[ib]==None:  # filler for empty block
 					self.state[self.area_to_stateidx['goal_stack'][ib]] = -1
 				else:
@@ -112,7 +112,7 @@ class Simulator(parse.Simulator):
 		self.correct_record = np.zeros_like(self.goal) # reset correct record
 		self.current_time = 0 # reset time
 		info = None
-		print(f"final remove goal ready: {self.goal}")
+		# print(f"final remove goal ready: {self.goal}")
 		return self.state.copy(), info
 
 
@@ -120,10 +120,10 @@ class Simulator(parse.Simulator):
 def test_simulator(expert=True, repeat=10, verbose=False):
 	sim = Simulator(verbose=verbose)
 	pprint.pprint(sim.action_dict)
-	for difficulty in range(sim.max_blocks+1):
+	for difficulty in range(sim.stack_max_blocks+1):
 		for _ in range(repeat):
 			print(f'------------ repeat {repeat}, state after reset\t{sim.reset(shuffle=True, difficulty_mode="curriculum", cur_curriculum_level=difficulty)[0]}')
-			expert_demo = utils.remove_expert_demo(sim) if expert else None
+			expert_demo = utils.expert_demo_remove(sim) if expert else None
 			rtotal = 0 # total reward of episode
 			nsteps = sim.max_steps if (not expert) else len(expert_demo)
 			print(f"expert_demo: {expert_demo}")
