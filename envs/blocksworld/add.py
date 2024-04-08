@@ -155,26 +155,31 @@ class Simulator(parse.Simulator):
 def test_simulator(expert=True, repeat=10, verbose=False):
 	sim = Simulator(verbose=verbose)
 	pprint.pprint(sim.action_dict)
+	avg_expert_len = []
 	for difficulty in range(sim.stack_max_blocks+1):
-		for _ in range(repeat):
-			print(f'------------ repeat {repeat}, state after reset\t{sim.reset(shuffle=True, difficulty_mode="curriculum", cur_curriculum_level=difficulty)[0]}')
+		expert_len = []
+		for r in range(repeat):
+			print(f'------------ repeat {r}, state after reset\t{sim.reset(shuffle=True, difficulty_mode="curriculum", cur_curriculum_level=difficulty)[0]}')
 			expert_demo = utils.expert_demo_add(sim) if expert else None
 			rtotal = 0 # total reward of episode
 			nsteps = sim.max_steps if (not expert) else len(expert_demo)
-			print(f"expert_demo: {expert_demo}")
+			print(f"expert_demo: {expert_demo}")  if verbose else 0
 			for t in range(nsteps):
 				action_idx = random.choice(list(range(sim.num_actions))) if (not expert) else expert_demo[t]
 				next_state, reward, terminated, truncated, info = sim.step(action_idx)
 				rtotal += reward
-				print(f't={t},\tr={round(reward, 5)},\taction={action_idx}\t{sim.action_dict[action_idx]},\ttruncated={truncated},\tdone={terminated},\n\tjust_projected={sim.just_projected}, all_correct={sim.all_correct}, correct_record={sim.correct_record}')
-				print(f'\tnext state {next_state}\t')
+				print(f't={t},\tr={round(reward, 5)},\taction={action_idx}\t{sim.action_dict[action_idx]},\ttruncated={truncated},\tdone={terminated},\n\tjust_projected={sim.just_projected}, all_correct={sim.all_correct}, correct_record={sim.correct_record}')  if verbose else 0
+				print(f'\tnext state {next_state}\t')  if verbose else 0
 			readout = utils.synthetic_readout(sim.assembly_dict, sim.last_active_assembly, sim.head, len(sim.goal), sim.blocks_area)
-			print(f'end of episode (difficulty={difficulty}), num_blocks={sim.num_blocks}, synthetic readout {readout}, goal {sim.goal}, total reward={rtotal}')
+			print(f'end of episode (difficulty={difficulty}), num_blocks={sim.num_blocks}, synthetic readout {readout}, goal {sim.goal}, total reward={rtotal}')  if verbose else 0
 			if expert:
 				assert readout == sim.goal, f"readout {readout} and goal {sim.goal} should be the same"
 				assert terminated, "episode should be done"
 				assert np.isclose(rtotal, sim.episode_max_reward-sim.action_cost*nsteps), \
 						f"rtotal {rtotal} and theoretical total {sim.episode_max_reward-sim.action_cost*nsteps} should be roughly the same"
+				expert_len.append(len(expert_demo))
+		avg_expert_len.append(np.mean(expert_len)) if expert else 0
+	print(f"\n\navg expert demo length {avg_expert_len}\n\n")
 
 
 
@@ -307,7 +312,8 @@ class Test(test_utils.EnvironmentTestMixin, absltest.TestCase):
 
 if __name__ == "__main__":
 	# random.seed(1)
-	test_simulator(expert=True, repeat=100, verbose=False)
+	test_simulator(expert=False, repeat=500, verbose=False)
+	test_simulator(expert=True, repeat=200, verbose=False)
 	
 	absltest.main()
 

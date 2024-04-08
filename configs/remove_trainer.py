@@ -101,12 +101,12 @@ def observation_encoder(
     The output of the neural network, ie. the encoded representation.
   """
   # embeddings for different elements in state repr
-  state_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+  state_embed = hk.Linear(512, w_init=hk.initializers.TruncatedNormal())
   # embeddings for prev reward and action
-  reward_embed = hk.Linear(64, w_init=hk.initializers.RandomNormal())
-  action_embed = hk.Linear(64, w_init=hk.initializers.TruncatedNormal())
+  reward_embed = hk.Linear(128, w_init=hk.initializers.RandomNormal())
+  action_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
   # backbone of the encoder: mlp with relu
-  mlp = hk.nets.MLP([512,512,512], activate_final=True) # default RELU activations between layers (and after final layer)
+  mlp = hk.nets.MLP([512,512,512,512], activate_final=True) # default RELU activations between layers (and after final layer)
   def fn(x, dropout_rate=None):
     # concatenate embeddings and previous reward and action
     x = jnp.concatenate((
@@ -553,7 +553,7 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['1R']),
+            "group": tune.grid_search(['2R']),
             "num_steps": tune.grid_search([200e6]),
 
             "max_grad_norm": tune.grid_search([80.0]),

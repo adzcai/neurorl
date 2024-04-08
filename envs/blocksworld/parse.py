@@ -16,9 +16,8 @@ from typing import Any, Dict, Optional
 import tree
 
 '''
-TODO
-	implement __sample_from_curriculum
 DONE
+	implement __sample_from_curriculum
 	differentiate max blocks in planning vs max blocks in a single stack/brain
 	consider whether to wipe head instead of silence (no)
 '''
@@ -54,6 +53,20 @@ class Simulator():
 
 		
 	def __create_episode(self, shuffle, difficulty_mode, cur_curriculum_level):
+		'''
+		Create a goal stack confirguation for the episode.
+		Input
+			shuffle: (boolean)
+				whether or not to shuffle items in the goal stack
+			difficulty_mode: {'curriculum', 'uniform', 0, 1<=int<=stack_max_blocks}
+				determines the number of blocks in goal stack
+				if 'curriculum', sample a number from a curriculum distribution
+				if 'uniform' or 0, sample a number from uniform distribution [1,stack_max_blocks]
+				if 1<=int<=stack_max_blocks: number of blocks in goal will be equal to this given number
+			cur_curriculum_level: {None, 1<=int<=stack_max_blocks}
+				only needed when difficulty_mode=='curriculum', otherwise None
+				specify the current number of blocks to focus on for the curriculum
+		'''
 		goal = [None] * self.stack_max_blocks # dummy goal template, to be filled
 		num_blocks = None # actual number of blocks in the stack, to be modified
 		if difficulty_mode=='curriculum':
@@ -78,9 +91,28 @@ class Simulator():
 		return num_blocks, goal
 
 	def __sample_from_curriculum(self, cur_curriculum_level):
-		assert 1 <= curriculum <= self.stack_max_blocks
-		level = curriculum
-		return level
+		'''
+		randomly sample a number of blocks for the goal stack, based on the given curriculum
+		Input:	
+			cur_curriculum_level: (1<=int<=stack_max_blocks)
+				the curriculum distribution will be [r, r, ..., 0.15, 0.7, 0, 0, ...]
+				where 0.7 is probability for the currently focused number of blocks for the curriculum
+				0.15 for the immediate previous curriculum
+				higher levels will have 0 probability
+				lower levels will have uniform probability given whatever prob is left
+		Return:
+			num_blocks: (int)
+				the number of blocks in goal for this episode
+		'''
+		assert 1 <= cur_curriculum_level <= self.stack_max_blocks, f"should have 1<= cur_curriculum_level ({cur_curriculum_level}) <= {self.stack_max_blocks}"
+		population = list(range(1, self.stack_max_blocks+1)) # possible number of blocks
+		weights = np.zeros(self.stack_max_blocks)
+		weights[cur_curriculum_level-1] += 0.7 # weight for current level
+		weights[max(cur_curriculum_level-2, 0)] += 0.15 # weight for the prev level
+		weights[: max(cur_curriculum_level-2, 1)] += 0.15 / max(cur_curriculum_level-2, 1)
+		assert np.sum(weights)==1, f"weights {weights} should sum to 1"
+		num_blocks = random.choices(population=population, weights=weights, k=1)[0]
+		return num_blocks
 
 	def reset(self, shuffle=True, difficulty_mode='uniform', cur_curriculum_level=None):
 		'''
@@ -101,7 +133,6 @@ class Simulator():
 		info = None
 		return self.state.copy(), info
 
-
 	def close(self):
 		'''
 		Close and clear the environment.
@@ -116,7 +147,6 @@ class Simulator():
 		del self.current_time, self.num_assemblies, self.num_fibers
 		return 
 		
-
 	def step(self, action_idx):
 		'''
 		Return: 
@@ -167,8 +197,8 @@ class Simulator():
 					self.state[area_to_stateidx[area_name][self.area_status[2]]] = len(self.assembly_dict[area_name])
 				# readout stack	and compute reward
 				readout = utils.synthetic_readout(self.assembly_dict, self.last_active_assembly, self.head, len(self.goal), self.blocks_area)
-				r, self.all_correct, self.correct_record = utils.calculate_readout_reward(readout, self.goal, self.correct_record, self.unit_reward, self.reward_decay_factor)
-				reward += r 
+				units, self.all_correct, self.correct_record = utils.calculate_readout_reward(readout, self.goal, self.correct_record, self.reward_decay_factor)
+				reward += self.unit_reward * units
 				# update current stack in state
 				for ib, sidx in enumerate(area_to_stateidx["current_stack"]):
 					self.state[sidx] = readout[ib] if readout[ib] != None else -1
@@ -210,8 +240,8 @@ class Simulator():
 					f"is_last_block should be False after silencing head"
 				readout = utils.synthetic_readout(self.assembly_dict, self.last_active_assembly, self.head, len(self.goal), self.blocks_area)
 				assert readout == [None]*self.stack_max_blocks, f"readout {readout} should all be None after silencing head" 
-				r, self.all_correct, self.correct_record = utils.calculate_readout_reward(readout, self.goal, self.correct_record, self.unit_reward, self.reward_decay_factor)
-				reward += r
+				units, self.all_correct, self.correct_record = utils.calculate_readout_reward(readout, self.goal, self.correct_record, self.reward_decay_factor)
+				reward += units * self.unit_reward
 				for sidx, sval in zip(state_change_tuple[0], state_change_tuple[1]):
 					self.state[sidx] = sval # update top area, top a, top bid, is last block, current readout
 			self.just_projected = False
@@ -224,7 +254,6 @@ class Simulator():
 		return self.state.copy(), reward, terminated, truncated, info
 
 
-		
 	def create_state_representation(self):
 		'''
 		Initialize the episode state in the environmenmt. 
@@ -431,26 +460,34 @@ def test_simulator(stack_max_blocks=7, expert=True, repeat=10, verbose=False):
 	sim = Simulator(stack_max_blocks=stack_max_blocks, verbose=verbose)
 	pprint.pprint(sim.action_dict)
 	start_time = time.time()
-	for difficulty in range(sim.stack_max_blocks+1):
-		for _ in range(repeat):
-			print(f'\n\n------------ repeat {repeat}, state after reset\t{sim.reset(shuffle=True, difficulty_mode=difficulty)[0]}')
+	avg_expert_len = []
+	for num_blocks in range(sim.stack_max_blocks+1):
+		expert_len = []
+		print(f"num_blocks {num_blocks}")
+		for r in range(repeat):
+			state, _ = sim.reset(shuffle=True, difficulty_mode='curriculum', cur_curriculum_level=min(num_blocks+1, stack_max_blocks))
+			# state, _ = sim.reset(shuffle=True, difficulty_mode=num_blocks) # specify num of blocks
+			print(f'\n\n------------ repeat {r}, state after reset\t{state}') if verbose else 0
 			expert_demo = utils.expert_demo_parse(sim.goal, sim.num_blocks) if expert else None
 			rtotal = 0 # total reward of episode
 			nsteps = sim.max_steps if (not expert) else len(expert_demo)
-			print(f"expert demo {expert_demo}")
+			print(f"expert demo {expert_demo}") if verbose else 0
 			for t in range(nsteps):
 				action_idx = random.choice(list(range(sim.num_actions))) if (not expert) else expert_demo[t]
 				next_state, reward, terminated, truncated, info = sim.step(action_idx)
 				rtotal += reward
-				print(f't={t},\tr={round(reward, 5)},\taction={action_idx}\t{sim.action_dict[action_idx]},\ttruncated={truncated},\tdone={terminated},\n\tjust_projected={sim.just_projected}, all_correct={sim.all_correct}, correct_record={sim.correct_record}')
-				print(f'\tnext state {next_state}\t')
+				print(f't={t},\tr={round(reward, 5)},\taction={action_idx}\t{sim.action_dict[action_idx]},\ttruncated={truncated},\tdone={terminated},\n\tjust_projected={sim.just_projected}, all_correct={sim.all_correct}, correct_record={sim.correct_record}') if verbose else 0
+				print(f'\tnext state {next_state}\t') if verbose else 0
 			readout = utils.synthetic_readout(sim.assembly_dict, sim.last_active_assembly, sim.head, len(sim.goal), sim.blocks_area)
-			print(f'end of episode (difficulty={difficulty}), num_blocks={sim.num_blocks}, synthetic readout {readout}, goal {sim.goal}, total reward={rtotal}, time lapse={time.time()-start_time}')
+			print(f'end of episode (difficulty={difficulty}), num_blocks={sim.num_blocks}, synthetic readout {readout}, goal {sim.goal}, total reward={rtotal}, time lapse={time.time()-start_time}') if verbose else 0
 			if expert:
 				assert readout == sim.goal, f"readout {readout} and goal {sim.goal} should be the same"
 				assert terminated, "episode should be done"
 				assert np.isclose(rtotal, sim.episode_max_reward-sim.action_cost*nsteps), \
 						f"rtotal {rtotal} and theoretical total {sim.episode_max_reward-sim.action_cost*nsteps} should be roughly the same"
+				expert_len.append(len(expert_demo))
+		avg_expert_len.append(np.mean(expert_len)) if expert else 0
+	print(f"\n\navg expert demo length {avg_expert_len}\n\n")
 
 
 
@@ -464,7 +501,7 @@ class EnvWrapper(dm_env.Environment):
 		https://github.com/google-deepmind/dm_env/
 		https://github.com/google-deepmind/acme/
 	'''
-	def __init__(self, environment: Simulator, shuffle=True, difficulty_mode='uniform', cur_curriculum_level=None):
+	def __init__(self, environment: Simulator):
 		self._environment = environment
 		self._reset_next_step = True
 		self._last_info = None
@@ -473,13 +510,10 @@ class EnvWrapper(dm_env.Environment):
 		act_space = self._environment.num_actions-1 # maximum action index
 		self._observation_spec = _convert_to_spec(obs_space, name='observation')
 		self._action_spec = _convert_to_spec(act_space, name='action')
-		self.shuffle = shuffle # whether to shuffle blocks for each episode
-		self.difficulty_mode = difficulty_mode
-		self.cur_curriculum_level = cur_curriculum_level
 
 	def reset(self) -> dm_env.TimeStep:
 		self._reset_next_step = False
-		observation, info = self._environment.reset(shuffle=self.shuffle, difficulty_mode=self.difficulty_mode, cur_curriculum_level=self.cur_curriculum_level)
+		observation, info = self._environment.reset()
 		self._last_info = info
 		return dm_env.restart(observation)
 	
@@ -585,7 +619,8 @@ class Test(test_utils.EnvironmentTestMixin, absltest.TestCase):
 if __name__ == "__main__":
 
 	# random.seed(1)
-	test_simulator(stack_max_blocks=7, expert=True, repeat=100, verbose=False)
+	test_simulator(stack_max_blocks=7, expert=False, repeat=500, verbose=False)
+	test_simulator(stack_max_blocks=7, expert=True, repeat=200, verbose=False)
 	
 	absltest.main()
 

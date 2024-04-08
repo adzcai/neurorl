@@ -5,19 +5,19 @@ module load python/3.10.12-fasrc01
 mamba activate neurorl
 
 // launch parallel job
-python configs/parse_trainer.py \
+python configs/plan_trainer.py \
   --search='initial' \
   --parallel='sbatch' \
   --num_actors=1 \
   --use_wandb=True \
   --partition=gpu_test \
   --wandb_entity=yichenli \
-  --wandb_project=parse \
+  --wandb_project=plan \
   --run_distributed=True \
   --time=0-12:00:00 
 
 // test in interactive session
-python configs/parse_trainer.py \
+python configs/plan_trainer.py \
   --search='initial' \
   --parallel='none' \
   --run_distributed=True \
@@ -60,11 +60,11 @@ import library.parallel as parallel
 import library.utils as utils
 import library.networks as networks
 
-from envs.blocksworld import parse
+from envs.blocksworld import plan
 from envs.blocksworld.cfg import configurations 
 
-obsfreq = 10000
-cfg = configurations['parse']
+obsfreq = 50000
+cfg = configurations['plan']
 
 # -----------------------
 # command line flags definition, using absl library
@@ -88,7 +88,9 @@ State = jax.Array
 def observation_encoder(
     inputs: acme_wrappers.observation_action_reward.OAR,
     num_actions: int,
-    max_assemblies: int=cfg['max_assemblies']):
+    stack_max_blocks: int=configurations['stack_max_blocks'],
+    puzzle_max_blocks: int=configurations['puzzle_max_blocks'],
+    puzzle_max_stacks: int=configurations['puzzle_max_stacks']):
   """
   A neural network to encode the environment observation / state.
   In the case of parsing blocks, 
@@ -101,7 +103,21 @@ def observation_encoder(
     The output of the neural network, ie. the encoded representation.
   """
   # embeddings for different elements in state repr
-  state_embed = hk.Linear(512, w_init=hk.initializers.TruncatedNormal())
+  curstack_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+  cut1 = stack_max_blocks*puzzle_max_stacks # state idx as cutting point
+  goalstack_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+  cut2 = cut1+stack_max_blocks*puzzle_max_stacks
+  table_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+  cut3 = cut2+puzzle_max_blocks
+  corhist_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+  cut4 = cut3+puzzle_max_stacks
+  spointer_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+  cut5 = cut4+1
+  tpointer_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+  cut6 = cut5+1
+  iparsed_embed = hk.Linear(64, w_init=hk.initializers.TruncatedNormal())
+  cut7 = cut6+1
+  gparsed_embed = hk.Linear(64, w_init=hk.initializers.TruncatedNormal())
   # embeddings for prev reward and action
   reward_embed = hk.Linear(128, w_init=hk.initializers.RandomNormal())
   action_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
@@ -110,7 +126,14 @@ def observation_encoder(
   def fn(x, dropout_rate=None):
     # concatenate embeddings and previous reward and action
     x = jnp.concatenate((
-        state_embed(jax.nn.one_hot(x.observation, max_assemblies).reshape(-1)),
+        curstack_embed(jax.nn.one_hot(x.observation[:cut1], puzzle_max_blocks).reshape(-1)),
+        goalstack_embed(jax.nn.one_hot(x.observation[cut1:cut2], puzzle_max_blocks).reshape(-1)),
+        table_embed(jax.nn.one_hot(x.observation[cut2:cut3], puzzle_max_blocks).reshape(-1)),
+        corhist_embed(jax.nn.one_hot(x.observation[cut3:cut4], stack_max_blocks).reshape(-1)),
+        spointer_embed(jax.nn.one_hot(x.observation[cut4:cut5], puzzle_max_stacks).reshape(-1)),
+        tpointer_embed(jax.nn.one_hot(x.observation[cut5:cut6], puzzle_max_blocks).reshape(-1)),
+        iparsed_embed(jax.nn.one_hot(x.observation[cut6:cut7], 2).reshape(-1)),
+        iparsed_embed(jax.nn.one_hot(x.observation[cut7:], 2).reshape(-1)),
         reward_embed(jnp.expand_dims(x.reward, 0)), 
         action_embed(jax.nn.one_hot(x.action, num_actions))  
       ))
@@ -238,7 +261,7 @@ class QObserver(basics.ActorObserver):
     ax.set_xlim(0, max_steps)
     self.wandb_log({f"{self.prefix}/reward_prediction": wandb.Image(fig)}) # Log the plot to wandb
     plt.close(fig) # Close the plot
-    # plot each state action in the episode
+    # # plot each state action in the episode
     # fig, ax = plt.subplots(max_steps//10, 10, figsize=(50,9*(max_steps//10))) # 10 plots a row
     # stateh = observations[0].shape[0]
     # statew = observations[0].shape[1]
@@ -255,12 +278,10 @@ class QObserver(basics.ActorObserver):
     # plt.close(fig)
     for t in range(npreds): # print actions 
       print(f"t={t}, A={action_names[t]}, R={rewards[t]}, Q={q_values[t]}")
-    
     # current episode reward
     episode_reward = jnp.sum(rewards)
     print(f'current episode rewards {episode_reward}')
     results['episode_reward'] = episode_reward
-    
     return results
   
 def make_environment(seed: int ,
@@ -276,11 +297,11 @@ def make_environment(seed: int ,
   del evaluation
   
   # create dm_env
-  sim = parse.Simulator()
+  sim = plan.Simulator()
   sim.reset()
   cfg['num_actions'] = sim.num_actions
   cfg['action_dict'] = sim.action_dict
-  env = parse.EnvWrapper(sim)
+  env = plan.EnvWrapper(sim)
 
   # add acme wrappers
   wrapper_list = [
@@ -552,15 +573,15 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['1Parse']),
+            "group": tune.grid_search(['2Plan']),
             "num_steps": tune.grid_search([200e6]),
 
             "max_grad_norm": tune.grid_search([80.0]),
             "learning_rate": tune.grid_search([1e-4]),
             "epsilon_begin": tune.grid_search([0.9]),
             "agent": tune.grid_search(['qlearning']),
-            "state_dim": tune.grid_search([512]),
-            "q_dim": tune.grid_search([512]),
+            "state_dim": tune.grid_search([1024]),
+            "q_dim": tune.grid_search([1024]),
         }
     ]
   else:

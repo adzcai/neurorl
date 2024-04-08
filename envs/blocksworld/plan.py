@@ -5,6 +5,7 @@ suppose we have 3 segments in the state: current stacks, table stacks, goal stac
 '''
 import random
 import numpy as np
+import pprint
 from envs.blocksworld.cfg import configurations
 from envs.blocksworld import utils
 
@@ -18,20 +19,20 @@ import tree
 cfg = configurations['plan']
 
 '''
-TODO
-cur stack and goal stack are: top (must have) -> bottom (optional)
-expert demo input and goal
-state vec 1D
-base_block_reward -> unit reward
+DONE
+	cur stack and goal stack are: top (must have) -> bottom (optional)
+	expert demo input and goal
+	state vec 1D
+	base_block_reward -> unit reward
 '''
 
 class Simulator():
 	def __init__(self,
-			  puzzle_max_stacks=cfg['puzzle_max_stacks'], 
-			  puzzle_max_blocks=cfg['puzzle_max_blocks'], 
+			  puzzle_max_stacks=configurations['puzzle_max_stacks'], 
+			  puzzle_max_blocks=configurations['puzzle_max_blocks'], 
 			  stack_max_blocks=configurations['stack_max_blocks'], 
-			  max_steps=cfg['max_steps'],
 			  episode_max_reward=configurations['episode_max_reward'],
+			  max_steps=cfg['max_steps'],
 			  reward_decay_factor=cfg['reward_decay_factor'],
 			  action_cost=cfg['action_cost'],
 			  verbose=False):
@@ -46,90 +47,112 @@ class Simulator():
 		self.verbose = verbose
 		self.action_dict = self.create_action_dictionary() 
 		self.num_actions = len(self.action_dict)
-
+		self.unit_reward = utils.calculate_unit_reward(self.reward_decay_factor, self.stack_max_blocks, self.episode_max_reward) / self.puzzle_max_stacks
 
 	def close(self):
-		del state
-		del action_dict, action_to_statechange
-		del current_time
+		del self.state
+		del self.input_stacks, self.goal_stacks, self.flipped_goal_stacks, self.puzzle_num_blocks
+		del self.unit_reward
+		del self.action_dict, self.action_to_statechange
+		del self.current_time
 		return 
-	
 
-	def reset(self, difficulty=None, curriculum=cfg['curriculum']):
+	def reset(self, puzzle_num_blocks=None, curriculum=cfg['curriculum']):
 		info = None
 		self.puzzle_num_blocks, input_stacks, goal_stacks = utils.sample_random_puzzle(puzzle_max_stacks=self.puzzle_max_stacks, 
-													puzzle_max_blocks=self.puzzle_max_blocks, stack_max_blocks=self.stack_max_blocks
-													difficulty=difficulty, curriculum=curriculum)
-		assert difficulty==None or (difficulty == self.puzzle_num_blocks)
-		# format the input and goal to same length
-		self.goal_stacks = [[-1 for _ in range(self.stack_max_blocks)] for _ in range(puzzle_max_stacks)] # [puzzle_max_stacks, stack_max_blocks]
-		for istack in range(len(goal_stacks)): # a stack [-1, -1, ..., top block, ..., bottom block]
-			for jblock in range(1, len(goal_stacks[istack])+1): # traverse backwards
-				self.goal_stacks[istack][-jblock] = goal_stacks[istack][-jblock] 
-		self.flipped_goal_stacks = self.__flip(self.goal_stacks)
-		self.input_stacks = [[-1 for _ in range(self.stack_max_blocks)] for _ in range(puzzle_max_stacks)] # [puzzle_max_stacks, stack_max_blocks]
-		for istack in range(len(input_stacks)): # a stack [-1, -1, ..., top block, ..., bottom block]
-			for jblock in range(1, len(input_stacks[istack])+1): # traverse backwards
-				self.input_stacks[istack][-jblock] = input_stacks[istack][-jblock]
-
-		self.current_time = 0 # reset time 
-		self.state, self.action_to_statechange = self.create_state_representation() # reset state
+																					puzzle_max_blocks=self.puzzle_max_blocks, 
+																					stack_max_blocks=self.stack_max_blocks,
+																					puzzle_num_blocks=puzzle_num_blocks, 
+																					curriculum=curriculum)
+		assert puzzle_num_blocks==None or (puzzle_num_blocks == self.puzzle_num_blocks)
+		# print(f"reset, puzzle_num blocks {self.puzzle_num_blocks}, inputs{input_stacks}, goal{goal_stacks}")
+		# format the input and goal to same size: [puzzle_max_stacks, stack_max_blocks]
+		self.goal_stacks = [[-1 for _ in range(self.stack_max_blocks)] for _ in range(self.puzzle_max_stacks)] 
+		for istack in range(len(goal_stacks)): # stack reads from top/highest block to bottom/lowest block, then filled by -1s
+			for jblock in range(len(goal_stacks[istack])): 
+				self.goal_stacks[istack][jblock] = goal_stacks[istack][jblock] 
+		self.flipped_goal_stacks = self.flip(self.goal_stacks)  # flipped stack reads from bottom/lowest block to top/highest block, then filled by -1s
+		self.input_stacks = [[-1 for _ in range(self.stack_max_blocks)] for _ in range(self.puzzle_max_stacks)]
+		for istack in range(len(input_stacks)): # stack reads from top/highest block to bottom/lowest block, then filled by -1s
+			for jblock in range(len(input_stacks[istack])): 
+				self.input_stacks[istack][jblock] = input_stacks[istack][jblock]
+		self.current_time = 0  
+		self.state, self.action_to_statechange = self.create_state_representation() 
 		return self.state.copy(), info
 	
-	def __update_state(self, changes):
-		# set state idxs to new vals
+	def __set_state(self, changes):
+		'''
+		Set state idxs to new vals
+		changes: [[state idxs to be changed], [new values to be filled]]
+		'''
 		idxs, vals = changes[0], changes[1]
-		for idx, val in zip(idxs, vals):
-			self.state[idx] = val
+		assert len(idxs)==len(vals), f"idxs {idxs} and vals {vals} should have same size"
+		for i, v in zip(idxs, vals):
+			self.state[i] = v
 
 	def __add_to_state(self, changes):
-		# add vals to state idxs
+		'''
+		Add vals to state idxs
+		changes: [[state idxs to be changed], [new values to be added]]
+		'''
 		idxs, vals = changes[0], changes[1]
-		for idx, val in zip(idxs, vals):
-			self.state[idx] += val
+		assert len(idxs)==len(vals), f"idxs {idxs} and vals {vals} should have same size"
+		for i, v in zip(idxs, vals):
+			self.state[i] += v
 
-	def __stack_empty(self, istart, length=self.stack_max_blocks):
+	def __stack_empty(self, istart, length):
 		# all empty (-1) blocks in a stack in state
+		assert istart>=0 and istart+length<len(self.state)
 		return np.all(self.state[istart: istart+length] == -1)
 
-	def __stack_full(self, istart, length=self.stack_max_blocks):
+	def __stack_full(self, istart, length):
 		# no empty (-1) blocks in a stack in state
+		assert istart>=0 and istart+length<len(self.state)
 		return np.all(self.state[istart: istart+length] != -1)
 	
-	def __pop_top_block(self, istart, length=self.stack_max_blocks):
+	def __pop_from_stack(self, istart, length):
 		# remove the top block from a stack in the state 
+		if length==1:
+			b = self.state[istart]
+			self.state[istart] = -1
+			return b
 		b = self.state[istart] # the top block to be popped
-		remaining = self.state[istart+1 : istart+length] # the remaining blocks
-		self.state[istart: istart+length-1] = remaining # shift everything to the left
-		self.state[istart+length-1] = -1 # fill the last position with empty
+		newstack = np.roll(self.state[istart : istart+length], -1) # shift to the left
+		newstack[-1] = -1 # fill the last position with empty
+		self.state[istart: istart+length] = newstack
+		assert self.state[istart+length-1]==-1, f"last item after pop should be -1, but stack is {self.state[istart: istart+length]}"
 		return b
 
-	def __insert_top_block(self, block, istart, length=self.stack_max_blocks):
+	def __insert_top_block(self, block, istart, length):
 		# add the top block to a stack in the state 
-		remaining = self.state[istart: istart+length-1] # the remaining blocks
-		self.state[istart+1: istart+length] = remaining # shift everything to the right
-		self.state[istart] = block # fill the first position with new block
+		if length==1:
+			self.state[istart] = block
+			return
+		newstack = np.roll(self.state[istart: istart+length], 1) # shift everything to the right
+		newstack[0] = block # fill the first position with new block
+		self.state[istart: istart+length] = newstack
+		assert self.state[istart]==block, f"first item after insert should be {block}, but stack is {self.state[istart: istart+length]}"
 	
-	def __ith_empty_table(self, istart, length=self.puzzle_max_blocks, i=1):
-		# find the state idx corresponding to the ith empty table 
-		# assuming table size 1
+	def __ith_empty_position(self, istart, length, i=1):
+		# find the state idx corresponding to the ith empty position 
 		for idx in range(istart, istart+length):
-			if self.state[idx] == -1:
+			if self.state[idx] == -1.:
 				i -= 1
 			if i == 0:
 				return idx
-
-
-
+		assert False, f"table {self.state[istart: istart+length]} (istart {istart}, length {length}) has no empty position!"
 
 	def step(self, action_idx):
 		action_idx = int(action_idx)
 		action_name = self.action_dict[action_idx] 
 		action_to_statechange = self.action_to_statechange
-		cur_pointer = self.state[action_to_statechange['stack_pointer']]
-		table_pointer = self.state[action_to_statechange['table_pointer']]
-		input_parsed = self.state[action_to_statechange['input_parsed']]
-		goal_parsed = self.state[action_to_statechange['goal_parsed']]
+		stack_pointer = int(self.state[action_to_statechange['stack_pointer']])
+		assert 0 <= stack_pointer < self.puzzle_max_stacks, f"stack_pointer {stack_pointer} should be 0<=, <{self.puzzle_max_stacks}"
+		table_pointer = int(self.state[action_to_statechange['table_pointer']])
+		assert 0 <= table_pointer < self.puzzle_max_blocks, f"table_pointer {table_pointer} should be 0<=, <{self.puzzle_max_stacks}"
+		input_parsed = int(self.state[action_to_statechange['input_parsed']])
+		goal_parsed = int(self.state[action_to_statechange['goal_parsed']])
+		assert (input_parsed==0 or input_parsed==1) and (goal_parsed==0 or goal_parsed==1), f"input_parsed {input_parsed}, goal_parsed {goal_parsed}"
 		reward = -self.action_cost # default cost for performing any action
 		terminated = False # whether the episode ended
 		truncated = False # end due to max steps
@@ -139,66 +162,71 @@ class Simulator():
 				reward -= self.action_cost*2  # BAD, perform any other actions before input or goal is parsed
 				print('\tboth input and goal not parsed yet') if self.verbose else 0
 			elif (not input_parsed) and action_name == "parse_input": # GOOD, parse input for first time
-				self.__update_state(action_to_statechange[action_idx])
+				self.__set_state(action_to_statechange[action_name])
+				assert self.state[action_to_statechange['input_parsed']]==1, f"state {self.state} should have input parsed being 1, but have {self.state[action_to_statechange['input_parsed']]}"
 			elif (not goal_parsed) and action_name == "parse_goal": # GOOD, parse goal for first time
-				self.__update_state(action_to_statechange[action_idx])
+				self.__set_state(action_to_statechange[action_name])
+				assert self.state[action_to_statechange['goal_parsed']]==1, f"state {self.state} should have input parsed being 1, but have {self.state[action_to_statechange['goal_parsed']]}"
 			else: # BAD, perform other actions when one of input or goal still not parsed
 				reward -= self.action_cost*2
 				print('\teither input or goal not parsed yet') if self.verbose else 0
 		elif action_name == "next_stack":
-			if cur_pointer + 1 >= self.puzzle_max_stacks: # BAD, new cur pointer idx out of range
+			if stack_pointer + 1 >= self.puzzle_max_stacks: # BAD, new cur pointer idx out of range
 				reward -= self.action_cost
 				print('\tcur pointer out of range') if self.verbose else 0
 			else: # GOOD, next stack
-				self.__add_to_state(action_to_statechange[action_idx])
+				self.__add_to_state(action_to_statechange[action_name])
 		elif action_name == "previous_stack":
-			if cur_pointer == 0: # BAD, cur pointer is already minimum
+			if stack_pointer == 0: # BAD, cur pointer is already minimum
 				reward -= self.action_cost
 				print('\tcur pointer out of range') if self.verbose else 0
 			else: # GOOD, previous stack
-				self.__add_to_state(action_to_statechange[action_idx])
+				self.__add_to_state(action_to_statechange[action_name])
 		elif action_name == "next_table":
-			if table_pointer + 1 >= self.max_blocks: # BAD, new table pointer out of range
+			if table_pointer + 1 >= self.puzzle_max_blocks: # BAD, new table pointer out of range
 				reward -= self.action_cost
 				print('\ttable pointer out of range') if self.verbose else 0
 			else: # GOOD, next table stack
-				self.__add_to_state(action_to_statechange[action_idx])
+				self.__add_to_state(action_to_statechange[action_name])
 		elif action_name == "previous_table":
 			if table_pointer == 0: # BAD, table pointer is already minimum
 				reward -= self.action_cost
 				print('\ttable pointer out of range') if self.verbose else 0
 			else: # GOOD, previous table stack
-				self.__add_to_state(action_to_statechange[action_idx])
+				self.__add_to_state(action_to_statechange[action_name])
 		elif action_name == "remove":
-			if self.__stack_empty(action_to_statechange['cur_stacks_begin'][stack_pointer]): # BAD, cur stack is empty
-				reward -= self.action_cost
+			if self.__stack_empty(istart=action_to_statechange['cur_stacks_begin'][stack_pointer], length=self.stack_max_blocks): 
+				reward -= self.action_cost # BAD, cur stack is empty
 				print('\tnothing to remove, cur stack empty') if self.verbose else 0
 			else: # GOOD, pop the top block from cur stack
-				block = self.__pop_top_block(action_to_statechange['cur_stacks_begin'][stack_pointer])
-				sidx = self.__ith_empty_table(action_to_statechange['table'][0])
-				self.__update_state([[sidx], [block]])
-				print('\tremove top block', block_id) if self.verbose else 0
-				r, terminated = self.__reward(curstacks=self.__flip(self.__decode_curstacks), goalstacks=self.flipped_goal_stacks)
-				reward += r
+				block = self.__pop_from_stack(istart=action_to_statechange['cur_stacks_begin'][stack_pointer], length=self.stack_max_blocks)
+				sidx = self.__ith_empty_position(istart=action_to_statechange['table'][0], length=self.puzzle_max_blocks, i=1)
+				self.__set_state([[sidx], [block]])
+				print('\tremove top block', block) if self.verbose else 0
+				units, terminated, correct_history = self.__reward(cur_stacks=self.flip(self.decode_cur_stacks()), goal_stacks=self.flipped_goal_stacks)
+				reward += units * self.unit_reward
+				self.__set_state([action_to_statechange['correct_history'], correct_history])
 		elif action_name == "add":
-			if self.__stack_empty(action_to_statechange['table'][table_pointer], length=1): 
+			if self.__stack_empty(istart=action_to_statechange['table'][table_pointer], length=1): 
 				reward -= self.action_cost # BAD, nothing to add, table stack is empty
 				print('\tnothing to add, table stack empty') if self.verbose else 0
-			elif self.__stack_full(action_to_statechange['cur_stacks_begin'][stack_pointer]): 
+			elif self.__stack_full(istart=action_to_statechange['cur_stacks_begin'][stack_pointer], length=self.stack_max_blocks): 
 				reward -= self.action_cost # BAD, intent to add to cur stack, but stack full
-				print('\tintend to add to full stack, last block in stack is',self.state[cur_pointer+self.max_blocks-1]) if self.verbose else 0
+				print('\tintend to add to full stack, last block in stack is',self.state[stack_pointer+self.stack_max_blocks-1]) if self.verbose else 0
 			else: # GOOD, add the block to cur stack
-				new_block = self.__pop_top_block(action_to_statechange['table'][table_pointer], length=1) # pop from table
-				self.__insert_top_block(new_block, action_to_statechange['cur_stacks_begin'][stack_pointer])
-				r, terminated = self.__reward(curstacks=self.__flip(self.__decode_curstacks), goalstacks=self.flipped_goal_stacks)
-				reward += r 
+				block = self.__pop_from_stack(istart=action_to_statechange['table'][table_pointer], length=1) # pop from table
+				self.__insert_top_block(block=block, istart=action_to_statechange['cur_stacks_begin'][stack_pointer], length=self.stack_max_blocks)
+				units, terminated, correct_history = self.__reward(cur_stacks=self.flip(self.decode_cur_stacks()), goal_stacks=self.flipped_goal_stacks)
+				reward += units * self.unit_reward
+				self.__set_state([action_to_statechange['correct_history'], correct_history])
 		elif action_name == "parse_input": # BAD, parse input repetitively
 			assert input_parsed
-			self.__update_state(action_to_statechange[action_idx])
+			self.__set_state(action_to_statechange[action_name])
 			reward -= self.action_cost*2
 			print('\tinput parsed again, reset') if self.verbose else 0
 		elif action_name == "parse_goal": # BAD, parse goal repetitively
-			self.__update_state(action_to_statechange[action_idx])
+			assert goal_parsed
+			self.__set_state(action_to_statechange[action_name])
 			reward -= self.action_cost*2
 			print('\tgoal parsed again') if self.verbose else 0
 		self.current_time += 1
@@ -206,71 +234,52 @@ class Simulator():
 			truncated = True
 		return self.state.copy(), reward, terminated, truncated, info
 
-
-	def __intersection(self, curstack, goalstack):
+	def flip(self, stacks):
 		'''
-		return the number of blocks that match in curstack and goalstack (starting from the bottom)
-			and the number of blocks that need to be removed from curstack (i.e. the non matching blocks)
+		Input/goal stacks are given as normally ordered blocks 
+		(read from highest/top block to lowest/bottom block, then filled by -1s)
+		Return stacks read from lowest block to highest block, then filled by -1s
 		'''
-		intersection, num_to_remove = 0, 0
-		for i in range(self.max_blocks-1, -1, -1): # iterate from bottom to top
-			if goalstack[i] != -1 and (curstack[i]==goalstack[i]):
-				intersection += 1
-			else: # first nonmatching block
-				break
-		for j in range(self.max_blocks-1, -1, -1):
-			if curstack[j]==-1: # find the idx of first empty block
-				break
-		num_to_remove = i-j # number of blocks to be removed from curstack
-		return intersection, num_to_remove 
-	
-	def __flip(self, stacks):
 		newstacks = []
 		for s in stacks:
 			news = []
-			for ib in range(len(s)-1, -1, -1):
-				if s[ib]==-1:
+			for ib in range(len(s)-1, -1, -1): # back to front
+				if s[ib]==-1: # skip empty positions
 					continue
 				else:
 					news.append(s[ib])
-			news += [-1] * (len(s)-len(news))
+			news += [-1] * (len(s)-len(news)) # fill the rest with -1s
+			assert len(news)==self.stack_max_blocks, f"wrong length after flipping stack {s} => {news}"
 			newstacks.append(news)
 		return newstacks
 
-	def __decode_curstacks(self):
-		curstacks = []
-		for istack in range(self.puzzle_max_stacks):
+	def decode_cur_stacks(self):
+		# each stack will be ordered as top/highest to bottom/lowest, then filled with -1s
+		cur_stacks = []
+		for istack in range(self.puzzle_max_stacks): 
 			stack = []
 			for jblock in range(self.stack_max_blocks):
 				stack.append(int(self.state[self.action_to_statechange['cur_stacks_begin'][istack] + jblock]))
-			curstacks.append(stack)
-		return curstacks
+			cur_stacks.append(stack)
+		return cur_stacks
 		
-	def __reward(self, curstacks, goalstacks):
-		return 0
-
-	def __readout_reward(self):
-		cur_stacks = self.__decode_curstack()
-		print('cur_stacks', cur_stacks) if self.verbose else 0
-		intersection_record = self.state[self.max_blocks*(self.puzzle_max_stacks*2+1):self.max_blocks*(self.puzzle_max_stacks*2+1)+self.puzzle_max_stacks, :].tolist()
-		base_block_reward = self.base_block_reward
-		reward_decay_factor = self.reward_decay_factor
-		score = 0
-		intersections = [0] * self.puzzle_max_stacks # temporary intersection for the current readout
-		for istack in range(self.puzzle_max_stacks): # iterate each stack
-			intersections[istack], _ = self.__intersection(cur_stacks[istack], self.goal[istack]) # number of blocks that match 
-			print('intersections', intersections, 'intersection_record', intersection_record) if self.verbose else 0
-			if intersections[istack]!=0 and (intersection_record[istack][intersections[istack]-1]==0): # new match
-				score += sum([base_block_reward / (reward_decay_factor**(d+1)) for d in range(intersections[istack])])
-				intersection_record[istack][intersections[istack]-1] = 1 # update the intersection record for the new match
-				if intersections[istack] > 1: # fill preceeding intersection record with all 1s
-					intersection_record[istack][:intersections[istack]] = [1 for _ in range(intersections[istack])]
-			elif intersections[istack] != 0: # already matched, give smaller reward
-				score += 0
-		all_correct = sum(intersections) == self.num_valid_blocks # all blocks are matched
-		self.state[self.max_blocks*(self.puzzle_max_stacks*2+1):self.max_blocks*(self.puzzle_max_stacks*2+1)+self.puzzle_max_stacks,:] = np.array(intersection_record)
-		return score, all_correct
-	
+	def __reward(self, cur_stacks, goal_stacks):
+		# assuming cur_stacks and goal_stacks are already flipped: read from lowest block to highest block, then -1s
+		units = 0
+		all_correct = []
+		correct_history = []
+		for i, (cstack, gstack) in enumerate(zip(cur_stacks, goal_stacks)):
+			assert len(cstack)==len(gstack), f"cur stack {cstack} and goal stack {gstack} should have same length"
+			ncorrect = int(self.state[self.action_to_statechange['correct_history'][i]])
+			assert 0 <= ncorrect <= self.stack_max_blocks, f"correct history value {ncorrect} of stack {i} should be 0<=, <={self.stack_max_blocks}"
+			crecord = np.zeros_like(cstack)
+			crecord[:ncorrect] = 1
+			u, ac, crecord = utils.calculate_readout_reward(cstack, gstack, crecord, self.reward_decay_factor)
+			units += u
+			all_correct.append(ac)
+			correct_history.append(max(ncorrect, np.sum(crecord)))
+			assert 0<= correct_history[-1] <= self.stack_max_blocks
+		return units, all(all_correct), correct_history
 		
 	def create_state_representation(self):
 		'''
@@ -284,25 +293,27 @@ class Simulator():
 		There are puzzle_max_blocks table stacks available.
 		Return:
 			state: (1D list of int)
-				[table stack 1 block, table stack 2 block, ..., table stack puzzle_max_blocks block,
-				cur stack 1 top block, cur stack 1 second block, ..., cur stack 1 bottom block, cur stack 2 top block, ..., cur puzzle_max_stacks bottom block,
+				[cur stack 1 top block, cur stack 1 second block, ..., cur stack 1 bottom block, cur stack 2 top block, ..., cur puzzle_max_stacks bottom block,
 				goal stack 1 top block, goal stack 1 second block, ..., goal stack 1 bottom block, goal stack 2 top block, ..., goal puzzle_max_stacks bottom block,
-				intersection record (num of correct blocks throughout episode) for stack 1, ..., intersection record for stack puzzle_max_stacks,
-				cur stack pointer (int 0 to puzzle_max_stacks-1), table pointer (int 0 to puzzle_max_blocks-1),
-				input parsed throughout episode (0 or 1), goal parsed throughout episode (0 or 1)
+				table stack 1 block, table stack 2 block, ..., table stack puzzle_max_blocks block,
+				correct history record (num of correct blocks throughout episode) for stack 1, ..., correct_history record for stack puzzle_max_stacks,
+				cur stack pointer (int 0 to puzzle_max_stacks-1), 
+				table pointer (int 0 to puzzle_max_blocks-1),
+				input ever parsed throughout episode (0 or 1), 
+				goal ever parsed throughout episode (0 or 1)]
 			action_to_statechange: (dict)
-				{action_idx: [[state idxs to change], [new values in state]], ...
-				info: [state idxs related to the info], ...}
-				action_idx should match self.action_dict
+				{action_name: [[state idxs to change], [new values in state]], ...,
+				'cur_stacks_begin': [state idxs for the first block in each current stack],
+				'table': [state idxs for each table stack],
+				'correct_history': [state idxs for the correct history of each stack],
+				'stack_pointer': state idx for current stack pointer,
+				'table_pointer': state idx for table pointer,}
 		'''
 		state_vec = []
 		state_idx = 0
-		action_idx = 0
 		action_to_statechange = {}
 		# action -> state change: parse input
-		parse_input_action_idx = action_idx
-		action_to_statechange[action_idx] = [[],[]] # if parse input called, where and what to update in state
-		assert self.action_dict[action_idx] == 'parse_input'
+		action_to_statechange['parse_input'] = [[],[]] # if parse input called, where and what to update in state
 		# info -> state idx: each cur stack top block to state location
 		action_to_statechange['cur_stacks_begin'] = []
 		# encode current stacks
@@ -310,71 +321,64 @@ class Simulator():
 			action_to_statechange['cur_stacks_begin'].append(state_idx)
 			for jblock in range(self.stack_max_blocks):
 				state_vec.append(-1) # initialized as empty
-				action_to_statechange[action_idx][0].append(state_idx)
-				action_to_statechange[action_idx][1].append(self.input_stacks[istack][jblock])
+				action_to_statechange['parse_input'][0].append(state_idx)
+				action_to_statechange['parse_input'][1].append(self.input_stacks[istack][jblock])
 				state_idx += 1
-		action_idx += 1
+		assert len(action_to_statechange['cur_stacks_begin']) == self.puzzle_max_stacks
 		# action -> state change: parse goal
-		parse_goal_action_idx = action_idx
-		action_to_statechange[action_idx] = [[], []] # if parse goal called, where and what to update in state
-		assert self.action_dict[action_idx] == 'parse_goal'
+		action_to_statechange['parse_goal'] = [[], []] # if parse goal called, where and what to update in state
 		# encode goal stacks
 		for istack in range(self.puzzle_max_stacks):
 			for jblock in range(self.stack_max_blocks):
 				state_vec.append(-1) # initialized as empty
-				action_to_statechange[action_idx][0].append(state_idx)
-				action_to_statechange[action_idx][1].append(self.goal_stacks[istack][jblock])
+				action_to_statechange['parse_goal'][0].append(state_idx)
+				action_to_statechange['parse_goal'][1].append(self.goal_stacks[istack][jblock])
 				state_idx += 1
-		action_idx += 1
 		# info -> state idx: table block to state location
 		action_to_statechange['table'] = [] # will be filled with state idxs for each table stack
 		# encode table stacks
 		for _ in range(self.puzzle_max_blocks):
 			state_vec.append(-1) # initialized as empty
 			action_to_statechange['table'].append(state_idx) 
+			action_to_statechange['parse_input'][0].append(state_idx) 
+			action_to_statechange['parse_input'][1].append(-1) # clear table when parse input
 			state_idx += 1
-		# info -> state idx: intersection record of each stack to state location
-		action_to_statechange['intersection'] = []
-		# encode intersection record
+		assert len(action_to_statechange['table'])==self.puzzle_max_blocks
+		# info -> state idx: correct_history record of each stack to state location
+		action_to_statechange['correct_history'] = []
+		# encode correct_history record
 		for _ in range(self.puzzle_max_stacks): 
 			state_vec.append(0) # num correct blocks in each stack
-			action_to_statechange['intersection'].append(state_idx)
+			action_to_statechange['correct_history'].append(state_idx)
 			state_idx += 1
+		assert len(action_to_statechange['correct_history'])==self.puzzle_max_stacks
 		# action -> state change: next cur stack
-		action_to_statechange[action_idx] = [[], []]
-		assert self.action_dict[action_idx] == 'next_stack'
+		action_to_statechange['next_stack'] = [[], []]
 		# encode cur stack pointer
 		state_vec.append(0) # initialize to first stack
-		action_to_statechange[action_idx][0].append(state_idx)
-		action_to_statechange[action_idx][1].append(+1)
-		action_idx += 1
-		action_to_statechange[parse_input_action_idx][0].append(state_idx) # reset cur pointer when parse input
-		action_to_statechange[parse_input_action_idx][1].append(0)
+		action_to_statechange['next_stack'][0].append(state_idx)
+		action_to_statechange['next_stack'][1].append(+1) # stack pointer will be incremented by 1
+		action_to_statechange['parse_input'][0].append(state_idx) # reset cur pointer when parse input
+		action_to_statechange['parse_input'][1].append(0)
 		# action -> state change: prev cur stack
-		action_to_statechange[action_idx] = [[], []]
-		assert self.action_dict[action_idx] == 'previous_stack'
-		action_to_statechange[action_idx][0].append(state_idx)
-		action_to_statechange[action_idx][1].append(-1)
-		action_idx += 1
+		action_to_statechange['previous_stack'] = [[], []]
+		action_to_statechange['previous_stack'][0].append(state_idx)
+		action_to_statechange['previous_stack'][1].append(-1)
 		# info -> state idx: flag for cur stack pointer to state location
 		action_to_statechange['stack_pointer'] = state_idx
 		state_idx += 1
 		# action -> state change: next table stack
-		action_to_statechange[action_idx] = [[], []]
-		assert self.action_dict[action_idx] == 'next_table'
+		action_to_statechange['next_table'] = [[], []]
 		# encode table pointer
 		state_vec.append(0) # initialize to first stack
-		action_to_statechange[action_idx][0].append(state_idx)
-		action_to_statechange[action_idx][1].append(+1)
-		action_idx += 1
-		action_to_statechange[parse_input_action_idx][0].append(state_idx) # reset table pointer when parse input
-		action_to_statechange[parse_input_action_idx][1].append(0)
+		action_to_statechange['next_table'][0].append(state_idx)
+		action_to_statechange['next_table'][1].append(+1)
+		action_to_statechange['parse_input'][0].append(state_idx) # reset table pointer when parse input
+		action_to_statechange['parse_input'][1].append(0)
 		# action -> state change: prev table stack
-		action_to_statechange[action_idx] = [[], []]
-		assert self.action_dict[action_idx] == 'previous_table'
-		action_to_statechange[action_idx][0].append(state_idx)
-		action_to_statechange[action_idx][1].append(-1)
-		action_idx += 1
+		action_to_statechange['previous_table'] = [[], []]
+		action_to_statechange['previous_table'][0].append(state_idx)
+		action_to_statechange['previous_table'][1].append(-1)
 		# info -> state idx: flag for table pointer to state location
 		action_to_statechange['table_pointer'] = state_idx
 		state_idx += 1
@@ -382,18 +386,18 @@ class Simulator():
 		state_vec.append(0) # initialize to False
 		# info -> state idx: flag for input parsed to state location
 		action_to_statechange['input_parsed'] = state_idx
-		action_to_statechange[parse_input_action_idx][0].append(state_idx) # update flag when parse input
-		action_to_statechange[parse_input_action_idx][1].append(1)
+		action_to_statechange['parse_input'][0].append(state_idx) # update flag when parse input
+		action_to_statechange['parse_input'][1].append(1)
 		state_idx += 1
 		# encode whether goal parsed
 		state_vec.append(0) # initialize to False
 		# info -> state idx: flag for goal parsed to state location
 		action_to_statechange['goal_parsed'] = state_idx
-		action_to_statechange[parse_goal_action_idx][0].append(state_idx) # update flag when parse goal
-		action_to_statechange[parse_goal_action_idx][1].append(1)
+		action_to_statechange['parse_goal'][0].append(state_idx) # update flag when parse goal
+		action_to_statechange['parse_goal'][1].append(1)
 		state_idx += 1
+		assert state_idx == len(state_vec)
 		return np.array(state_vec, dtype=np.float32), action_to_statechange
-
 
 	def create_action_dictionary(self):
 		'''
@@ -421,28 +425,38 @@ class Simulator():
 
 
 
-def test_simulator(verbose=False, use_expert=False):
-	self.verbose=verbose
-	self.state = self.create_state_representation()
-	print('initial state\n', self.state)
-	total_reward = 0
-	if not use_expert:
-		for t in range(self.max_steps+10):
-			action_idx = random.choice(list(range(0, self.num_actions)))
-			# print('current state\n', self.state)
-			self.state, reward, done, truncated, info = self.step(action_idx)
-			total_reward += reward
-			print('t={}, reward={}, action_idx={}, action={}, done={}, next state\n{}'.format(t, reward, action_idx, self.action_dict[action_idx], done, self.state))
-	else:
-		expert_actions = self.expert_demo()
-		for t in range(len(expert_actions)):
-			action_idx = expert_actions[t]
-			self.state, reward, done, truncated, info = self.step(action_idx)
-			# print('current state\n', self.state)
-			total_reward += reward
-			print('t={}, reward={}, action_idx={}, action={}, done={}, next state\n{}'.format(t, reward, action_idx, self.action_dict[action_idx], done, self.state))
-	print('total_reward', total_reward)
-		
+def test_simulator(expert=True, repeat=10, verbose=False):
+	sim = Simulator(verbose=verbose)
+	pprint.pprint(sim.action_dict)
+	avg_expert_len = []
+	for puzzle_num_blocks in range(2, sim.puzzle_max_blocks+1):
+		expert_len = []
+		print(f"puzzle_num_blocks {puzzle_num_blocks}")
+		for r in range(repeat):
+			state, info = sim.reset(puzzle_num_blocks=None, curriculum=puzzle_num_blocks) # use curriculum distribution
+			# state, info = sim.reset(puzzle_num_blocks=puzzle_num_blocks, curriculum=None) # specify num blocks
+			print(f'------------ repeat {r}, state after reset\t{state}') if verbose else 0
+			expert_demo = utils.expert_demo_plan(sim) if expert else None
+			rtotal = 0 # total reward of episode
+			nsteps = sim.max_steps if (not expert) else len(expert_demo)
+			print(f"expert_demo: {expert_demo}")  if verbose else 0
+			for t in range(nsteps):
+				action_idx = random.choice(list(range(sim.num_actions))) if (not expert) else expert_demo[t]
+				next_state, reward, terminated, truncated, info = sim.step(action_idx)
+				rtotal += reward
+				print(f't={t},\tr={round(reward, 5)},\taction={action_idx}\t{sim.action_dict[action_idx]},\ttruncated={truncated},\tdone={terminated}') if verbose else 0
+				print(f'\tnext state {next_state}\t') if verbose else 0
+			readout = sim.decode_cur_stacks()
+			print(f'end of episode (puzzle_num_blocks={puzzle_num_blocks}), num_blocks={sim.puzzle_num_blocks}, synthetic readout {readout}, goal {sim.goal_stacks}, total reward={rtotal}')  if verbose else 0
+			if expert:
+				assert readout == sim.goal_stacks, f"readout {readout} and goal {sim.goal_stacks} should be the same"
+				assert terminated, "episode should be done"
+				assert np.isclose(rtotal, sim.episode_max_reward-sim.action_cost*nsteps), \
+						f"rtotal {rtotal} and theoretical total {sim.episode_max_reward-sim.action_cost*nsteps} should be roughly the same"
+				expert_len.append(len(expert_demo))
+		avg_expert_len.append(np.mean(expert_len)) if expert else 0
+	print(f"\n\navg expert demo length {avg_expert_len}\n\n")
+
 
 
 class EnvWrapper(dm_env.Environment):
@@ -453,22 +467,19 @@ class EnvWrapper(dm_env.Environment):
 		https://github.com/google-deepmind/dm_env/
 		https://github.com/google-deepmind/acme/
 	'''
-	def __init__(self, environment: Simulator, random_number_generator):
+	def __init__(self, environment: Simulator):
 		self._environment = environment
 		self._reset_next_step = True
 		self._last_info = None
 		obs_space = self._environment.state
-		act_space = self._environment.n_actions-1 # maximum action index
+		act_space = self._environment.num_actions-1 # maximum action index
 		self._observation_spec = _convert_to_spec(obs_space, name='observation')
 		self._action_spec = _convert_to_spec(act_space, name='action')
-		self.rng = random_number_generator
 
 
 	def reset(self) -> dm_env.TimeStep:
 		self._reset_next_step = False
-		# self.rng = np.random.default_rng(self.rng.integers(low=0, high=100)) # refresh the rng
-		self.rng = np.random.default_rng(random.randint(0,100)) # refresh the rng
-		observation, info = self._environment.reset(random_number_generator=self.rng)
+		observation, info = self._environment.reset()
 		self._last_info = info
 		return dm_env.restart(observation)
 	
@@ -542,19 +553,12 @@ def _convert_to_spec(space: Any,
 			assert name=='action'
 		except:
 			raise ValueError('Converting integer to dm_env spec, but name is not action')
-		# return specs.BoundedArray(
-		# 	shape=(),
-		# 	dtype=dtype,
-		# 	minimum=min_val,
-		# 	maximum=max_val,
-		# 	name=name
-		# )
 		return specs.DiscreteArray(
 			num_values=max_val+1,
 			name=name
 		)
-	elif isinstance(space, np.ndarray):
-		min_val, max_val = space.min(), space.max()
+	elif isinstance(space, np.ndarray): # observation/state
+		min_val, max_val = space.min(), configurations['puzzle_max_blocks']
 		try:
 			assert name=='observation'
 		except:	
@@ -581,33 +585,17 @@ def _convert_to_spec(space: Any,
 
 class Test(test_utils.EnvironmentTestMixin, absltest.TestCase):
 	def make_object_under_test(self):
-		rng = np.random.default_rng(1)
-		num_blocks, input_stacks, goal_stacks = create_random_problem(difficulty=7, random_number_generator=rng)
-		# input_stacks = [[0,1,2]]
-		# goal_stacks = [[2,0,1]]
-		print('difficulty', num_blocks, '\ninput stacks', input_stacks, '\ngoal stacks', goal_stacks)
-		environment = Simulator(input_stacks=input_stacks, goal_stacks=goal_stacks)
-		return EnvWrapper(environment, rng)
+		environment = Simulator()
+		environment.reset()
+		return EnvWrapper(environment)
 	def make_action_sequence(self):
 		for _ in range(200):
 			yield self.make_action()
 
 
 if __name__ == '__main__':
-	# random.seed(3)	
-	# num_blocks, input_stacks, goal_stacks = create_random_problem(difficulty=7)
-	# print('difficulty', num_blocks, '\ninput stacks', input_stacks, '\ngoal stacks', goal_stacks)
-	# environment = Simulator(input_stacks=input_stacks, goal_stacks=goal_stacks)
-	# environment.test(verbose=True, use_expert=True)
-	# print('difficulty', num_blocks, '\ninput stacks', input_stacks, '\ngoal stacks', goal_stacks)
-	# print('max_episode_reward', environment.max_episode_reward)
-	
+	# random.seed(1)
+	test_simulator(expert=False, repeat=2000, verbose=False)
+	test_simulator(expert=True, repeat=1000, verbose=False)
 
 	absltest.main()
-	
-	# rng = np.random.default_rng(1)
-	# num_blocks, input_stacks, goal_stacks = create_random_problem(difficulty=7, random_number_generator=rng)
-	# simulator = Simulator(input_stacks=input_stacks, goal_stacks=goal_stacks)
-	# env = EnvWrapper(simulator, rng)
-	# for _ in range(5):
-	# 	env.reset()
