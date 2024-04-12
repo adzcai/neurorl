@@ -1,6 +1,6 @@
 '''
 // interactive session
-salloc -p gpu_test -t 0-03:00 --mem=8000 --gres=gpu:1
+salloc -p gpu_test -t 0-01:00 --mem=8000 --gres=gpu:1
 module load python/3.10.12-fasrc01
 mamba activate neurorl
 
@@ -14,7 +14,7 @@ python configs/plan_trainer.py \
   --wandb_entity=yichenli \
   --wandb_project=plan \
   --run_distributed=True \
-  --time=0-12:00:00 
+  --time=0-1:00:00 
 
 // test in interactive session
 python configs/plan_trainer.py \
@@ -63,8 +63,12 @@ import library.networks as networks
 from envs.blocksworld import plan
 from envs.blocksworld.cfg import configurations 
 
-obsfreq = 50000
-cfg = configurations['plan']
+obsfreq = 5000
+plotfreq = 5000
+UP_THRESHOLD = 5
+DOWN_THRESHOLD = 10
+up_pressure = 0
+down_pressure = 0
 
 # -----------------------
 # command line flags definition, using absl library
@@ -156,7 +160,8 @@ def make_qlearning_networks(
   Builds default R2D2 networks for Q-learning based on the environment specifications and configurations.
   """
   num_actions = int(env_spec.actions.maximum - env_spec.actions.minimum) + 1
-  assert num_actions == cfg['num_actions']
+  import envs.blocksworld.cfg as bwcfg
+  assert num_actions == bwcfg.configurations['plan']['num_actions']
 
   def make_core_module() -> q_learning.R2D2Arch:
 
@@ -173,21 +178,21 @@ def make_qlearning_networks(
     env_spec, make_core_module)
 
 
-  
 class QObserver(basics.ActorObserver):
   """
   An observer for tracking actions, rewards, and states during experiment.
-    May contain observations from both training and evaluation.
   Log observed information and visualizations to wandb.
   """
   def __init__(self,
-               period: int = 5000,
-               prefix: str = 'QObserver'):
+               period: int = obsfreq,
+               prefix: str = 'QObserver',
+               plot_every: int = plotfreq):
     super(QObserver, self).__init__()
     self.period = period
     self.prefix = prefix
     self.idx = -1
     self.logging = True
+    self.plot_every = plot_every
 
   def wandb_log(self, d: dict):
     if self.logging:
@@ -225,16 +230,23 @@ class QObserver(basics.ActorObserver):
     Should be time-step after selecting action"""
     self.timesteps.append(timestep)
 
-  def get_metrics(self, max_steps:int = cfg['max_steps']) -> Dict[str, any]:
+  def get_metrics(self) -> Dict[str, any]:
     """Returns metrics collected for the current episode."""
     if self.idx==0 or (not self.idx % self.period == 0):
       return
     if not self.logging:
       return 
-    print('\nlogging!')
+
+    print('\n\nlogging!')
+    import envs.blocksworld.cfg as bwcfg
+    max_steps = bwcfg.configurations['plan']['max_steps']
+    curriculum = bwcfg.configurations['plan']['curriculum']
+    global up_pressure, down_pressure, UP_THRESHOLD, DOWN_THRESHOLD
+    tmp_down_threshold = DOWN_THRESHOLD * (curriculum-1) if 2<=curriculum<=7 else DOWN_THRESHOLD*7 # adjust threshold for higher curriculum
+    print(f"current curriculum {curriculum}, up_pressure {up_pressure} / {UP_THRESHOLD}, down_pressure {down_pressure} / {tmp_down_threshold}")
     # first prediction is empty (None)
     results = {}
-    action_dict = cfg['action_dict']
+    action_dict = bwcfg.configurations['plan']['action_dict']
     q_values = [s.predictions for s in self.actor_states[1:]]
     q_values = jnp.stack(q_values)
     npreds = len(q_values)
@@ -243,47 +255,95 @@ class QObserver(basics.ActorObserver):
     action_names = [action_dict[a.item()] for a in actions]
     rewards = jnp.stack([t.reward for t in self.timesteps[1:]])
     observations = jnp.stack([t.observation.observation for t in self.timesteps[1:]])
+    # current episode reward
+    episode_reward = jnp.sum(rewards)
+    results['episode_reward'] = episode_reward 
     # log the metrics
     results["actions"] = actions
     results["action_names"] = action_names
     results["q_values"] = q_values
     results["rewards"] = rewards
     results["observations"] = observations 
-    # plot reward vs q value pred
-    fig, ax = plt.subplots()
-    ax.plot(q_values, label='q_values')
-    ax.plot(rewards, label='rewards')
-    ax.set_xlabel('step')
-    total_reward = rewards.sum()
-    ax.set_title(f"Total reward:\nR={total_reward}")
-    ax.legend()
-    ax.set_ylim(-1.1, 1.1)
-    ax.set_xlim(0, max_steps)
-    self.wandb_log({f"{self.prefix}/reward_prediction": wandb.Image(fig)}) # Log the plot to wandb
-    plt.close(fig) # Close the plot
-    # # plot each state action in the episode
-    # fig, ax = plt.subplots(max_steps//10, 10, figsize=(50,9*(max_steps//10))) # 10 plots a row
-    # stateh = observations[0].shape[0]
-    # statew = observations[0].shape[1]
-    # extent = (0, statew, stateh, 0)
-    # for t in range(npreds):
-    #   irow = t//10
-    #   jcol = t%10
-    #   ax[irow,jcol].imshow(observations[t], cmap="binary", vmin=0, vmax=1, extent=extent)
-    #   ax[irow,jcol].grid(color='gray', linewidth=2)
-    #   ax[irow,jcol].set_xticks(np.arange(statew))
-    #   ax[irow,jcol].set_yticks(np.arange(stateh))
-    #   ax[irow,jcol].set_title(f"A={action_names[t]}\nR={rewards[t]}\nQ={q_values[t]}")
-    # self.wandb_log({f"{self.prefix}/trajectory": wandb.Image(fig)})
-    # plt.close(fig)
-    for t in range(npreds): # print actions 
-      print(f"t={t}, A={action_names[t]}, R={rewards[t]}, Q={q_values[t]}")
-    # current episode reward
-    episode_reward = jnp.sum(rewards)
-    print(f'current episode rewards {episode_reward}')
-    results['episode_reward'] = episode_reward
+    if self.idx % self.plot_every == 0: # plot actions
+      fig, ax = plt.subplots(max_steps//10, 10, figsize=(30, 6*(max_steps//10)))
+      cut1 = configurations['stack_max_blocks']*configurations['puzzle_max_stacks'] # state idx as cutting point
+      cut2 = cut1+configurations['stack_max_blocks']*configurations['puzzle_max_stacks']
+      cut3 = cut2+configurations['puzzle_max_blocks']
+      cut4 = cut3+configurations['puzzle_max_stacks']
+      cut5 = cut4+1
+      cut6 = cut5+1
+      cut7 = cut6+1
+      for t in range(npreds):
+        irow = t//10
+        jcol = t%10
+        ax[irow,jcol].axhline(y=19, xmin=0, xmax=10)
+        ax[irow,jcol].text(0.2, 13.5, f"Curr:\n{observations[t][:cut1].reshape(configurations['puzzle_max_stacks'], configurations['stack_max_blocks'])}", 
+                          style='italic', bbox={'facecolor': 'orange', 'alpha': 0.2, 'pad': 1})
+        ax[irow,jcol].text(0.2, 8, f"Goal:\n{observations[t][cut1:cut2].reshape(configurations['puzzle_max_stacks'], configurations['stack_max_blocks'])}", 
+                          style='italic', bbox={'facecolor': 'green', 'alpha': 0.2, 'pad': 1})
+        ax[irow,jcol].text(0.2, 5, f"Table:\n{observations[t][cut2:cut3].reshape(2,-1)}", 
+                          style='italic', bbox={'facecolor': 'gray', 'alpha': 0.2, 'pad': 1})
+        ax[irow,jcol].text(0.2, 3, f"Correct: {observations[t][cut3:cut4]}", 
+                          style='italic', bbox={'facecolor': 'blue', 'alpha': 0.2, 'pad': 1})
+        ax[irow,jcol].text(0.2, 2, f"Spointer: {observations[t][cut4:cut5]}, Tpointer: {observations[t][cut5:cut6]}", 
+                          style='italic', bbox={'facecolor': 'white', 'alpha': 0.2, 'pad': 1})
+        ax[irow,jcol].text(0.2, 1, f"Iparsed: {observations[t][cut6:cut7]}, Gparsed: {observations[t][cut7:]}", 
+                          style='italic', bbox={'facecolor': 'white', 'alpha': 0.2, 'pad': 1})
+        ax[irow,jcol].set_xticks([])
+        ax[irow,jcol].set_yticks([])
+        ax[irow,jcol].set_ylim(0,19.1)
+        ax[irow,jcol].set_xlim(0,10.1)
+        ax[irow,jcol].set_title(f"A={action_names[t]}\nR={round(float(rewards[t]),5)}\nQ={round(float(q_values[t]),5)}")
+      plt.suptitle(t=f"Curriculum {curriculum}, up_pressure {up_pressure} / {UP_THRESHOLD}, down_pressure {down_pressure} / {tmp_down_threshold}\nepisode reward={episode_reward}",
+                    x=0.5, y=0.89)
+      self.wandb_log({f"{self.prefix}/trajectory": wandb.Image(fig)})
+      plt.close(fig)
+    for t in range(min(npreds, 50)): # print first 50 actions
+      print(f"t={t}, A={action_names[t]}, R={rewards[t]}, Q={q_values[t]}, state={observations[t]}")
+    
+    print(f'\ncurrent episode rewards {episode_reward}')
+    # check curriculum
+    if episode_reward > 0.9:
+      up_pressure += 1
+      down_pressure = 0
+      print(f"up_pressure + 1 = {up_pressure} / {UP_THRESHOLD}")
+    elif episode_reward < 0.4:
+      down_pressure += 1
+      up_pressure = 0
+      print(f"down_pressure + 1 = {down_pressure} / {tmp_down_threshold}")
+    else: # reset up and down pressure
+      up_pressure = 0
+      down_pressure = 0
+    if up_pressure >= UP_THRESHOLD: # up pressure reached threshold
+      if 2<=curriculum<=6:
+        curriculum += 1
+        print(f'up_pressure reached threshold, increasing curriculum from {curriculum-1} to {curriculum}')
+      elif curriculum==7:
+        curriculum = 0
+        print(f'up_pressure reached threshold, increasing curriculum from 7 to {curriculum}')
+      elif curriculum==0: 
+        print(f'up_pressure reached threshold, continuing curriculum {curriculum}')
+      else:
+        raise ValueError(f"curriculum {curriculum} should be int in set(0, 2, 3, ..., 7)")
+      up_pressure = 0 # release pressure
+    elif down_pressure >= tmp_down_threshold: # down pressure reached threshold
+      if 3<=curriculum<=7:
+        curriculum -= 1
+        print(f'down_pressure reached threshold, decreasing curriculum from {curriculum+1} to {curriculum}')
+      elif curriculum==0:
+        curriculum = 7
+        print(f"down_pressure reached threshold, falling back from curriculum 0 to {curriculum}")
+      elif curriculum==2:
+        curriculum = 2
+        print(f"down_pressure reached threshold, continuing curriculum {curriculum}")
+      else:
+        raise ValueError(f"curriculum {curriculum} should be int in set(0, 2, 3, ..., 7)")
+      down_pressure = 0 # release pressure
+    bwcfg.configurations['plan']['curriculum'] = curriculum # update curriculum in cfg file
+    print('logging ends\n\n')
     return results
   
+
 def make_environment(seed: int ,
                      evaluation: bool = False,
                      **kwargs) -> dm_env.Environment:
@@ -295,12 +355,15 @@ def make_environment(seed: int ,
   """
   del seed
   del evaluation
-  
+
   # create dm_env
   sim = plan.Simulator()
   sim.reset()
-  cfg['num_actions'] = sim.num_actions
-  cfg['action_dict'] = sim.action_dict
+  
+  # insert info into cfg
+  import envs.blocksworld.cfg as bwcfg
+  bwcfg.configurations['plan']['num_actions'] = sim.num_actions
+  bwcfg.configurations['plan']['action_dict'] = sim.action_dict
   env = plan.EnvWrapper(sim)
 
   # add acme wrappers
@@ -573,12 +636,13 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['2Plan']),
+            "group": tune.grid_search(['curtest10']),
             "num_steps": tune.grid_search([200e6]),
 
-            "max_grad_norm": tune.grid_search([80.0]),
-            "learning_rate": tune.grid_search([1e-4]),
-            "epsilon_begin": tune.grid_search([0.9]),
+            "samples_per_insert": tune.grid_search([20.0]),
+            "batch_size": tune.grid_search([128]),
+            "trace_length": tune.grid_search([10]),
+            "learning_rate": tune.grid_search([1e-3]),
             "agent": tune.grid_search(['qlearning']),
             "state_dim": tune.grid_search([1024]),
             "q_dim": tune.grid_search([1024]),

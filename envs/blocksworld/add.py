@@ -17,6 +17,7 @@ import tree
 TODO
 	check why need wipe when all blocks are removed
 	alternate btw add and remove in reset
+	curriculum for add, __add_curriculum
 '''
 
 cfg = configurations['add']

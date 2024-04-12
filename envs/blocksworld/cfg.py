@@ -1,3 +1,20 @@
+'''
+TODO
+	add reset: alternate btw add and remove
+	remove reset: alternate btw add and remove
+	add: curriculum
+	remove: curriculum
+	parse: curriculum
+	trainer: correct curriculum implementation parse, add, remove
+	systematic holdout test samples for plan (vary by puzzle_num_blocks)
+	train parse
+	train remove
+	train add
+	load trained agent checkpoint
+	integrate plan with parse/add/remove agents
+	test integrated plan agent on holdout samples
+'''
+
 configurations = {
 'skip_relocated': True,
 'stack_max_blocks': 7, # max num of blocks in any stack
@@ -9,9 +26,9 @@ configurations = {
 	{
 	'cfg': 'plan',
 	'max_steps': 200 , # maximum number of actions allowed in each episode
-	'reward_decay_factor': 0.9 , # discount factor for subsequently correct blocks, the larger the faster the decay
+	'reward_decay_factor': 0.9 ,  # reward discount factor, descending (first index is most rewarding) if 0 < factor < 1, ascending if factor > 1
 	'action_cost': 1e-3 , # cost for performing any action
-	'curriculum': 0 , # current curriculum level focusing on specific number of blocks. {None, 0, 2,..., puzzle_max_blocks}
+	'curriculum': 2 , # current curriculum level focusing on specific number of blocks. {None, 0, 2,..., puzzle_max_blocks}
 	},
 
 'parse':

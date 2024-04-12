@@ -23,6 +23,10 @@ python configs/parse_trainer.py \
   --run_distributed=True \
   --debug=True \
   --use_wandb=False 
+
+TODO
+  better encoder: parse, remove, add
+  curriculum for parse
 '''
 import functools 
 from typing import Dict
@@ -555,7 +559,7 @@ def sweep(search: str = 'default'):
             "group": tune.grid_search(['1Parse']),
             "num_steps": tune.grid_search([200e6]),
 
-            "max_grad_norm": tune.grid_search([80.0]),
+            "samples_per_insert": tune.grid_search([6.0, 10.0, 20.0, 50.0]),
             "learning_rate": tune.grid_search([1e-4]),
             "epsilon_begin": tune.grid_search([0.9]),
             "agent": tune.grid_search(['qlearning']),

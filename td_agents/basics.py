@@ -150,17 +150,17 @@ class Config(r2d2.R2D2Config):
   seed: int = 1
   discount: float = 0.99
   num_steps: int = 6e6
-  max_grad_norm: float = 80.0 # Yichen edited 80.0
+  max_grad_norm: float = 80.0 
   adam_eps: float = 1e-3
 
   # Replay options
   samples_per_insert_tolerance_rate: float = 0.1
-  samples_per_insert: float = 0.0
+  samples_per_insert: float = 6.0 # default 0.0
   min_replay_size: int = 10_000
   max_replay_size: int = 100_000
-  batch_size: Optional[int] = 32  # number of batch_elements
+  batch_size: Optional[int] = 128 # default 32  # number of batch_elements
   burn_in_length: int = 0  # burn in during learning
-  trace_length: Optional[int] = 40  # how long training_batch should be
+  trace_length: Optional[int] = 7 # default 40  # how long training_batch should be
   sequence_period: Optional[int] = None  # how often to add
   prefetch_size: int = 0
   num_parallel_calls: int = 1

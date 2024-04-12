@@ -57,13 +57,15 @@ class Simulator():
 		del self.current_time
 		return 
 
-	def reset(self, puzzle_num_blocks=None, curriculum=cfg['curriculum']):
+	def reset(self, puzzle_num_blocks=None, curriculum=None):
+		import envs.blocksworld.cfg as config
+		curriculum = config.configurations['plan']['curriculum']
 		info = None
 		self.puzzle_num_blocks, input_stacks, goal_stacks = utils.sample_random_puzzle(puzzle_max_stacks=self.puzzle_max_stacks, 
 																					puzzle_max_blocks=self.puzzle_max_blocks, 
 																					stack_max_blocks=self.stack_max_blocks,
 																					puzzle_num_blocks=puzzle_num_blocks, 
-																					curriculum=curriculum)
+																					curriculum=curriculum) 
 		assert puzzle_num_blocks==None or (puzzle_num_blocks == self.puzzle_num_blocks)
 		# print(f"reset, puzzle_num blocks {self.puzzle_num_blocks}, inputs{input_stacks}, goal{goal_stacks}")
 		# format the input and goal to same size: [puzzle_max_stacks, stack_max_blocks]

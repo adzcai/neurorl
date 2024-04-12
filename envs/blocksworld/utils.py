@@ -8,12 +8,10 @@ from envs.blocksworld.AC import bw_apps
 from envs.blocksworld import test_puzzles
 
 '''
-TODO
-	implement curriculum for plan
-	implement curriculum for add
 DONE	
 	holdout test set
 	implement curriculum for parse
+	implement curriculum for plan
 '''
 
 
