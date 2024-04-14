@@ -1,10 +1,10 @@
 '''
 TODO
-	add reset: alternate btw add and remove
 	remove reset: alternate btw add and remove
 	add: curriculum
 	remove: curriculum
 	parse: curriculum
+	check why need wipe when all blocks are removed
 	trainer: correct curriculum implementation parse, add, remove
 	systematic holdout test samples for plan (vary by puzzle_num_blocks)
 	train parse
@@ -13,6 +13,9 @@ TODO
 	load trained agent checkpoint
 	integrate plan with parse/add/remove agents
 	test integrated plan agent on holdout samples
+DONE
+	adjusted plan reward for empty blocks
+	add reset: alternate btw add and remove
 '''
 
 configurations = {
@@ -28,6 +31,7 @@ configurations = {
 	'max_steps': 200 , # maximum number of actions allowed in each episode
 	'reward_decay_factor': 0.9 ,  # reward discount factor, descending (first index is most rewarding) if 0 < factor < 1, ascending if factor > 1
 	'action_cost': 1e-3 , # cost for performing any action
+	'empty_block_unit': 0.005, # reward unit to give for each correct empty block
 	'curriculum': 2 , # current curriculum level focusing on specific number of blocks. {None, 0, 2,..., puzzle_max_blocks}
 	},
 

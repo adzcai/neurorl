@@ -13,12 +13,6 @@ from acme import types, specs
 from typing import Any, Dict, Optional
 import tree
 
-'''
-TODO
-	check why need wipe when all blocks are removed
-	alternate btw add and remove in reset
-	curriculum for add, __add_curriculum
-'''
 
 cfg = configurations['add']
 
@@ -32,6 +26,7 @@ class Simulator(parse.Simulator):
 						action_cost = action_cost,
 						reward_decay_factor = reward_decay_factor,
 						verbose = verbose)
+		self.maxnprocesses = self.stack_max_blocks*2
 		assert cfg['cfg'] == 'add', f"cfg is {cfg['cfg']}"
 
 
@@ -48,9 +43,15 @@ class Simulator(parse.Simulator):
 		goal[:num_blocks] = stack
 		return num_blocks, goal
 
-	def __add_curriculum(self, curriculum):
-		# number of blocks to add before creating a new episode in reset
-		return min(max(self.stack_max_blocks-self.num_blocks-1, 0), curriculum)
+	def __curriculum(self, cur_curriculum_level):
+		population = list(range(self.maxnprocesses+1))
+		weights = np.zeros_like(population, dtype=np.float32)
+		weights[cur_curriculum_level] += 0.7 # weight for current level
+		weights[max(cur_curriculum_level-1, 0)] += 0.15 # weight for the prev level
+		weights[: max(cur_curriculum_level-1, 1)] += 0.15 / max(cur_curriculum_level-1, 1) # weight for easier level
+		assert np.sum(weights)==1, f"weights {weights} should sum to 1"
+		nprocesses = random.choices(population=population, weights=weights, k=1)[0]
+		return nprocesses
 
 	def reset(self, shuffle=True, difficulty_mode='uniform', cur_curriculum_level=None):
 		'''
@@ -60,8 +61,8 @@ class Simulator(parse.Simulator):
 				whether to shuffle parse goal (parse goal will be of uniform length)
 			difficulty_mode: {'uniform', 'curriculum'}
 				first remove uniform number of blocks from parsed goal
-				then the difficulty_mode determines number of blocks added
-			cur_curriculum_level: {None, 0, 1, ..., self.stack_max_blocks-1}
+				then the difficulty_mode determines number of processes (add/remove) before creating the final goal
+			cur_curriculum_level: {None, 0, 1, ..., self.maxnprocesses}
 				if not None, determines number of blocks added after remove
 		Return:
 			state: (numpy array with float32)
@@ -78,56 +79,71 @@ class Simulator(parse.Simulator):
 		self.num_assemblies = self.puzzle_max_blocks
 		# first parse the stack
 		parse_actions = utils.expert_demo_parse(self.goal, self.num_blocks)
-		# print(f"\n\nparsing {self.goal}...") 
 		for t, a in enumerate(parse_actions):
 			self.state, r, terminated, truncated, info = super().step(a)
-		# then remove arbitrary number of blocks from the stack
-		nremove = random.randint(0, self.num_blocks) if self.num_blocks<self.stack_max_blocks else random.randint(1, self.num_blocks)
-		for ith in range(nremove): # remove blocks one by one
-			self.goal = self.goal[1:] + [None] # goal stack after removal
-			self.just_projected = False # record if the previous action was project
-			self.all_correct = False # if the most recent readout has everything correct
-			self.correct_record = np.zeros_like(self.goal) # binary record for how many blocks are ever correct in the episode
-			self.current_time = 0 # current step in the episode
-			for ib in range(self.stack_max_blocks): # update state vector to encode new goal
-				if self.goal[ib]==None:  # filler for empty block
-					self.state[self.area_to_stateidx['goal_stack'][ib]] = -1
-				else:
-					self.state[self.area_to_stateidx['goal_stack'][ib]] = self.goal[ib]
-			remove_actions = utils.expert_demo_remove(self) # actions to remove this block
-			# print(f"\tremoving for goal {self.goal}, remove_actions {remove_actions}")
-			for t, a in enumerate(remove_actions):
-				self.state, r, terminated, truncated, info = super().step(a)
-		self.num_blocks -= nremove # update number of blocks in current stack
-		if self.num_blocks==0: 
-			# print("\twipe!")
-			self.state, self.action_to_statechange, self.area_to_stateidx, self.stateidx_to_fibername, self.assembly_dict, self.last_active_assembly = self.create_state_representation()
-			self.num_assemblies = self.puzzle_max_blocks
-		# then add arbitrary number of blocks to the stack
-		nadd = random.randint(0, max(self.stack_max_blocks-self.num_blocks-1, 0)) if difficulty_mode=='uniform' else self.__add_curriculum(cur_curriculum_level)
-		for ith in range(nadd): # add blocks one by one
-			newblock = None
-			while newblock==None: # sample a valid new block id
-				tmpblock = random.randint(0, self.puzzle_max_blocks-1)
-				if tmpblock not in self.goal: 
-					newblock = tmpblock
-			self.newblock = newblock
-			self.goal = [newblock] + self.goal[:-1] # new goal after adding
-			self.just_projected = False # record if the previous action was project
-			self.all_correct = False # if the most recent readout has everything correct
-			self.correct_record = np.zeros_like(self.goal) # binary record for how many blocks are ever correct in the episode
-			self.current_time = 0 # current step in the episode
-			for ib in range(self.stack_max_blocks): # update state vector to encode new goal
-				if self.goal[ib]==None:  # filler for empty block
-					self.state[self.area_to_stateidx['goal_stack'][ib]] = -1
-				else:
-					self.state[self.area_to_stateidx['goal_stack'][ib]] = self.goal[ib]
-			add_actions = utils.expert_demo_add(self) # actions to remove this block
-			# print(f"adding for goal {self.goal}, \n\tadd_actions {add_actions}")
-			for t, a in enumerate(add_actions):
-				self.state, r, terminated, truncated, info = super().step(a)
-				# print(f"\tt={t}, a={self.action_dict[a]}, r={r}, state={self.state}, terminated={terminated}")
-		self.num_blocks += nadd # update number of blocks in current stack
+		# decide number of add/remove before returning final goal
+		nprocesses = random.randint(0, self.maxnprocesses) if self.num_blocks!=self.stack_max_blocks else random.randint(1, self.maxnprocesses)
+		if difficulty_mode == 'curriculum':
+			assert type(cur_curriculum_level)==int and cur_curriculum_level>=0, f"difficulty_mode is curriculum but cur_curriculum_level is {cur_curriculum_level}"
+			nprocesses = self.__curriculum(cur_curriculum_level)
+		elif difficulty_mode != 'uniform':
+			assert type(difficulty_mode) == int and difficulty_mode>=0, f"difficulty_mode {difficulty_mode} should be int>=0"
+			nprocesses = difficulty_mode
+		if (self.num_blocks==self.stack_max_blocks) and (nprocesses==0):
+			nprocesses = 1 # full stack, need at least 1 process
+			print(f'self.num_blocks==self.stack_max_blocks and nprocesses=0, adjusted nprocesses to 1')
+		# do n rounds of add/remove 
+		for iproc in range(nprocesses): 
+			curprocess = random.choice(['add', 'remove'])
+			if self.num_blocks==0:	# check remaining number of blocks in stack
+				curprocess = 'add' # empty stack, can only add
+			elif self.num_blocks==self.stack_max_blocks: 
+				curprocess = 'remove' # full stack, can only remove
+			elif (self.num_blocks==self.stack_max_blocks-1) and (iproc==nprocesses-1):
+				curprocess = 'remove' # last round should not produce full stack
+			if curprocess == 'remove':
+				self.goal = self.goal[1:] + [None] # goal stack after removal
+				self.just_projected = False # reset
+				self.all_correct = False # reset most recent readout correct record
+				self.correct_record = np.zeros_like(self.goal) # reset episode record
+				self.current_time = 0 # current step in the episode
+				for ib in range(self.stack_max_blocks): # update state vector to encode new goal
+					if self.goal[ib]==None:  # filler for empty block
+						self.state[self.area_to_stateidx['goal_stack'][ib]] = -1
+					else:
+						self.state[self.area_to_stateidx['goal_stack'][ib]] = self.goal[ib]
+				remove_actions = utils.expert_demo_remove(self) # actions to remove this block
+				# print(f"\tremoving for goal {self.goal}, remove_actions {remove_actions}")
+				for t, a in enumerate(remove_actions): # perform remove
+					self.state, r, terminated, truncated, info = super().step(a)
+				self.num_blocks -= 1 # update remaining num of blocks
+				if self.num_blocks==0: # check whether need to clean state
+					# print("\twipe!")
+					self.state, self.action_to_statechange, self.area_to_stateidx, self.stateidx_to_fibername, self.assembly_dict, self.last_active_assembly = self.create_state_representation()
+					self.num_assemblies = self.puzzle_max_blocks
+			elif curprocess=='add':
+				newblock = None
+				while newblock==None: # sample a valid new block id
+					tmpblock = random.randint(0, self.puzzle_max_blocks-1)
+					if tmpblock not in self.goal: 
+						newblock = tmpblock
+				self.newblock = newblock
+				self.goal = [newblock] + self.goal[:-1] # new goal after adding
+				self.just_projected = False # reset
+				self.all_correct = False # reset
+				self.correct_record = np.zeros_like(self.goal) # reset
+				self.current_time = 0 # reset
+				for ib in range(self.stack_max_blocks): # update state vector to encode new goal
+					if self.goal[ib]==None:  # filler for empty block
+						self.state[self.area_to_stateidx['goal_stack'][ib]] = -1
+					else:
+						self.state[self.area_to_stateidx['goal_stack'][ib]] = self.goal[ib]
+				add_actions = utils.expert_demo_add(self) # actions to add new block
+				# print(f"adding for goal {self.goal}, \n\tadd_actions {add_actions}")
+				for t, a in enumerate(add_actions):
+					self.state, r, terminated, truncated, info = super().step(a)
+					# print(f"\tt={t}, a={self.action_dict[a]}, r={r}, state={self.state}, terminated={terminated}")
+				self.num_blocks += 1 # update remaining number of blocks stack
 		# the real goal is adding 1 block to the current stack
 		assert self.num_blocks+1 <= self.stack_max_blocks, f"num blocks after add {self.num_blocks+1} exceeds stack max blocks {self.stack_max_blocks}"
 		newblock = None # sample a valid new block id 
@@ -142,12 +158,12 @@ class Simulator(parse.Simulator):
 				self.state[self.area_to_stateidx['goal_stack'][ib]] = -1
 			else:
 				self.state[self.area_to_stateidx['goal_stack'][ib]] = self.goal[ib]
-		self.correct_record = np.zeros_like(self.goal) # reset episode correct record
-		self.current_time = 0 # reset episode timer
+		self.correct_record = np.zeros_like(self.goal) # reset 
+		self.current_time = 0 # reset 
 		self.just_projected = False # reset 
 		self.all_correct = False # reset
 		info = None
-		# print(f"final add goal ready: {self.goal}")
+		print(f"final add goal ready: {self.goal}")
 		return self.state.copy(), info
 
 
@@ -157,10 +173,11 @@ def test_simulator(expert=True, repeat=10, verbose=False):
 	sim = Simulator(verbose=verbose)
 	pprint.pprint(sim.action_dict)
 	avg_expert_len = []
-	for difficulty in range(sim.stack_max_blocks+1):
+	for difficulty in range(sim.maxnprocesses+1):
 		expert_len = []
 		for r in range(repeat):
-			print(f'------------ repeat {r}, state after reset\t{sim.reset(shuffle=True, difficulty_mode="curriculum", cur_curriculum_level=difficulty)[0]}')
+			state, _ = sim.reset(shuffle=True, difficulty_mode="curriculum", cur_curriculum_level=difficulty)
+			print(f'------------ repeat {r}, state after reset\t{state}')
 			expert_demo = utils.expert_demo_add(sim) if expert else None
 			rtotal = 0 # total reward of episode
 			nsteps = sim.max_steps if (not expert) else len(expert_demo)
@@ -314,7 +331,7 @@ class Test(test_utils.EnvironmentTestMixin, absltest.TestCase):
 if __name__ == "__main__":
 	# random.seed(1)
 	test_simulator(expert=False, repeat=500, verbose=False)
-	test_simulator(expert=True, repeat=200, verbose=False)
+	test_simulator(expert=True, repeat=100, verbose=False)
 	
 	absltest.main()
 

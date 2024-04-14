@@ -14,7 +14,7 @@ python configs/plan_trainer.py \
   --wandb_entity=yichenli \
   --wandb_project=plan \
   --run_distributed=True \
-  --time=0-1:00:00 
+  --time=0-3:00:00 
 
 // test in interactive session
 python configs/plan_trainer.py \
@@ -63,12 +63,15 @@ import library.networks as networks
 from envs.blocksworld import plan
 from envs.blocksworld.cfg import configurations 
 
-obsfreq = 5000
-plotfreq = 5000
-UP_THRESHOLD = 5
-DOWN_THRESHOLD = 10
-up_pressure = 0
-down_pressure = 0
+obsfreq = 50 # frequency to call observer
+plotfreq = 50 # frequency to plot action trajectory
+UP_PRESSURE_THRESHOLD = 5 # pressure threshold to increase curriculum
+DOWN_PRESSURE_THRESHOLD = 10 # pressure threshold to decrease curriculum
+UP_REWARD_THRESHOLD = 0.9 # upper reward threshold for incrementing up pressure
+DOWN_REWARD_THRESHOLD = 0.4 # lower reward threshold for incrementing down pressure
+up_pressure = 0 # initial up pressure
+down_pressure = 0 # initial down pressure
+
 
 # -----------------------
 # command line flags definition, using absl library
@@ -241,9 +244,9 @@ class QObserver(basics.ActorObserver):
     import envs.blocksworld.cfg as bwcfg
     max_steps = bwcfg.configurations['plan']['max_steps']
     curriculum = bwcfg.configurations['plan']['curriculum']
-    global up_pressure, down_pressure, UP_THRESHOLD, DOWN_THRESHOLD
-    tmp_down_threshold = DOWN_THRESHOLD * (curriculum-1) if 2<=curriculum<=7 else DOWN_THRESHOLD*7 # adjust threshold for higher curriculum
-    print(f"current curriculum {curriculum}, up_pressure {up_pressure} / {UP_THRESHOLD}, down_pressure {down_pressure} / {tmp_down_threshold}")
+    global up_pressure, down_pressure, UP_PRESSURE_THRESHOLD, DOWN_PRESSURE_THRESHOLD, UP_REWARD_THRESHOLD, DOWN_REWARD_THRESHOLD
+    tmp_down_threshold = DOWN_PRESSURE_THRESHOLD * (curriculum-1) if 2<=curriculum<=7 else DOWN_PRESSURE_THRESHOLD*7 # adjust threshold for higher curriculum
+    print(f"current curriculum {curriculum}, up_pressure {up_pressure} / {UP_PRESSURE_THRESHOLD}, down_pressure {down_pressure} / {tmp_down_threshold}")
     # first prediction is empty (None)
     results = {}
     action_dict = bwcfg.configurations['plan']['action_dict']
@@ -294,7 +297,7 @@ class QObserver(basics.ActorObserver):
         ax[irow,jcol].set_ylim(0,19.1)
         ax[irow,jcol].set_xlim(0,10.1)
         ax[irow,jcol].set_title(f"A={action_names[t]}\nR={round(float(rewards[t]),5)}\nQ={round(float(q_values[t]),5)}")
-      plt.suptitle(t=f"Curriculum {curriculum}, up_pressure {up_pressure} / {UP_THRESHOLD}, down_pressure {down_pressure} / {tmp_down_threshold}\nepisode reward={episode_reward}",
+      plt.suptitle(t=f"Curriculum {curriculum}, up_pressure {up_pressure} / {UP_PRESSURE_THRESHOLD}, down_pressure {down_pressure} / {tmp_down_threshold}\nepisode reward={episode_reward}",
                     x=0.5, y=0.89)
       self.wandb_log({f"{self.prefix}/trajectory": wandb.Image(fig)})
       plt.close(fig)
@@ -303,18 +306,18 @@ class QObserver(basics.ActorObserver):
     
     print(f'\ncurrent episode rewards {episode_reward}')
     # check curriculum
-    if episode_reward > 0.9:
+    if episode_reward > UP_REWARD_THRESHOLD:
       up_pressure += 1
       down_pressure = 0
-      print(f"up_pressure + 1 = {up_pressure} / {UP_THRESHOLD}")
-    elif episode_reward < 0.4:
+      print(f"up_pressure + 1 = {up_pressure} / {UP_PRESSURE_THRESHOLD}")
+    elif episode_reward < DOWN_REWARD_THRESHOLD:
       down_pressure += 1
       up_pressure = 0
       print(f"down_pressure + 1 = {down_pressure} / {tmp_down_threshold}")
     else: # reset up and down pressure
       up_pressure = 0
       down_pressure = 0
-    if up_pressure >= UP_THRESHOLD: # up pressure reached threshold
+    if up_pressure >= UP_PRESSURE_THRESHOLD: # up pressure reached threshold
       if 2<=curriculum<=6:
         curriculum += 1
         print(f'up_pressure reached threshold, increasing curriculum from {curriculum-1} to {curriculum}')
@@ -636,8 +639,8 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['curtest10']),
-            "num_steps": tune.grid_search([200e6]),
+            "group": tune.grid_search(['ctest01']),
+            "num_steps": tune.grid_search([50e6]),
 
             "samples_per_insert": tune.grid_search([20.0]),
             "batch_size": tune.grid_search([128]),

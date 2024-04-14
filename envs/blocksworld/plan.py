@@ -35,6 +35,7 @@ class Simulator():
 			  max_steps=cfg['max_steps'],
 			  reward_decay_factor=cfg['reward_decay_factor'],
 			  action_cost=cfg['action_cost'],
+			  empty_block_unit=cfg['empty_block_unit'],
 			  verbose=False):
 		assert cfg['cfg'] == 'plan', f"cfg is {cfg['cfg']}"
 		self.puzzle_max_stacks = puzzle_max_stacks
@@ -47,7 +48,7 @@ class Simulator():
 		self.verbose = verbose
 		self.action_dict = self.create_action_dictionary() 
 		self.num_actions = len(self.action_dict)
-		self.unit_reward = utils.calculate_unit_reward(self.reward_decay_factor, self.stack_max_blocks, self.episode_max_reward) / self.puzzle_max_stacks
+		self.empty_block_unit = empty_block_unit
 
 	def close(self):
 		del self.state
@@ -78,6 +79,7 @@ class Simulator():
 		for istack in range(len(input_stacks)): # stack reads from top/highest block to bottom/lowest block, then filled by -1s
 			for jblock in range(len(input_stacks[istack])): 
 				self.input_stacks[istack][jblock] = input_stacks[istack][jblock]
+		self.unit_reward = self.__calculate_unit_reward()
 		self.current_time = 0  
 		self.state, self.action_to_statechange = self.create_state_representation() 
 		return self.state.copy(), info
@@ -265,6 +267,64 @@ class Simulator():
 			cur_stacks.append(stack)
 		return cur_stacks
 		
+	def __calculate_unit_reward(self):
+		'''
+		Assuming self.input_stacks and self.goal_stacks already exist.
+		Empty blocks will receive reward of 0.1 units, no decay applied.
+		'''
+		total_units = 0
+		for istack in range(self.puzzle_max_stacks):
+			nblocks = 0
+			nempty = 0
+			for jblock in range(self.stack_max_blocks):
+				if self.goal_stacks[istack][jblock] != -1:
+					nblocks += 1
+				else:
+					nempty += 1
+			assert nblocks + nempty == self.stack_max_blocks, f"nblocks {nblocks} + nempty {nempty} should be {self.stack_max_blocks}"
+			total_units += sum([self.reward_decay_factor**i for i in range(nblocks)])
+			total_units += self.empty_block_unit * nempty
+		unit_value = self.episode_max_reward / total_units
+		return unit_value
+
+	def __stack_readout_reward(self, readout, goal, correct_record):
+		'''
+		Calculate reward by comparing current stack readout with goal stack.
+			Reward decays from top to bottom block.
+			Reward a block only if all its previous (higher) blocks are correct.
+		Input: 
+			readout: current stack readout from the brain (chain of blocks from top to bottom)
+			goal: the goal stack chain of blocks (from top/high to bottom/low) to be matched
+			correct_record: binary record for how many blocks are already correct in this episode (index 0 records the correctness of block idx 0).
+				will not get reward anymore if the index was already correct in the episode.
+		Return: 
+			score: (float)
+				units of reward to award. 
+				an unit is the smallest amount of reward to give for a correct index.
+			all_correct: (boolean)
+				whether current readout has all blocks correct
+			correct_record: (numpy array with binary values)
+				history of correct in the episode.
+		'''
+		assert len(readout) == len(goal), f"readout length {len(readout)} and goal length {len(goal)} should match."
+		units = 0
+		num_correct = 0
+		prerequisite = [0 for _ in range(len(goal))] # the second block will received reward only if first block is also readout correctly
+		for jblock in range(len(goal)): # read from top to bottom
+			if readout[jblock] == goal[jblock]: # block match
+				prerequisite[jblock] = 1
+				num_correct += 1
+				if correct_record[jblock]==0 and utils.check_prerequisite(prerequisite, jblock): # reward new correct blocks in this episode
+					if readout[jblock]==-1: # empty position gets smaller reward
+						units += self.empty_block_unit
+					else: # actual block match gets larger reward (with decay)
+						units += (self.reward_decay_factor**jblock) # reward scales by position
+					correct_record[:jblock+1] = 1 # set the block record and all preceeding record to 1, record history for episode
+		all_correct = (num_correct > 0) and (num_correct == len(goal))
+		if all_correct:
+			assert np.all([r==1 for r in correct_record])
+		return units, all_correct, correct_record
+
 	def __reward(self, cur_stacks, goal_stacks):
 		# assuming cur_stacks and goal_stacks are already flipped: read from lowest block to highest block, then -1s
 		units = 0
@@ -276,7 +336,7 @@ class Simulator():
 			assert 0 <= ncorrect <= self.stack_max_blocks, f"correct history value {ncorrect} of stack {i} should be 0<=, <={self.stack_max_blocks}"
 			crecord = np.zeros_like(cstack)
 			crecord[:ncorrect] = 1
-			u, ac, crecord = utils.calculate_readout_reward(cstack, gstack, crecord, self.reward_decay_factor)
+			u, ac, crecord = self.__stack_readout_reward(cstack, gstack, crecord)
 			units += u
 			all_correct.append(ac)
 			correct_history.append(max(ncorrect, np.sum(crecord)))
@@ -533,9 +593,6 @@ class EnvWrapper(dm_env.Environment):
 		self._environment.close()
 		
 
-
-
-
 def _convert_to_spec(space: Any,
 					name: Optional[str] = None) -> types.NestedSpec:
 	"""
@@ -582,8 +639,6 @@ def _convert_to_spec(space: Any,
 	else:
 		raise ValueError('Unsupported data type for conversion to dm_env spec: {}'.format(space))
 	
-
-
 
 class Test(test_utils.EnvironmentTestMixin, absltest.TestCase):
 	def make_object_under_test(self):
