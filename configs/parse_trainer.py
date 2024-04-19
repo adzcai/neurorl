@@ -1,6 +1,6 @@
 '''
 // interactive session
-salloc -p gpu_test -t 0-03:00 --mem=8000 --gres=gpu:1
+salloc -p gpu_test -t 0-01:00 --mem=8000 --gres=gpu:1
 module load python/3.10.12-fasrc01
 mamba activate neurorl
 
@@ -10,11 +10,11 @@ python configs/parse_trainer.py \
   --parallel='sbatch' \
   --num_actors=1 \
   --use_wandb=True \
-  --partition=gpu_test \
+  --partition=gpu \
   --wandb_entity=yichenli \
   --wandb_project=parse \
   --run_distributed=True \
-  --time=0-12:00:00 
+  --time=0-72:00:00 
 
 // test in interactive session
 python configs/parse_trainer.py \
@@ -23,10 +23,6 @@ python configs/parse_trainer.py \
   --run_distributed=True \
   --debug=True \
   --use_wandb=False 
-
-TODO
-  better encoder: parse, remove, add
-  curriculum for parse
 '''
 import functools 
 from typing import Dict
@@ -67,8 +63,15 @@ import library.networks as networks
 from envs.blocksworld import parse
 from envs.blocksworld.cfg import configurations 
 
-obsfreq = 10000
-cfg = configurations['parse']
+obsfreq = 2000 # frequency to call observer
+plotfreq = 2000 # frequency to plot action trajectory
+UP_PRESSURE_THRESHOLD = 5 # pressure threshold to increase curriculum
+DOWN_PRESSURE_THRESHOLD = 10 # pressure threshold to decrease curriculum
+UP_REWARD_THRESHOLD = 0.9 # upper reward threshold for incrementing up pressure
+DOWN_REWARD_THRESHOLD = 0.5 # lower reward threshold for incrementing down pressure
+up_pressure = 0 # initial up pressure
+down_pressure = 0 # initial down pressure
+
 
 # -----------------------
 # command line flags definition, using absl library
@@ -92,20 +95,55 @@ State = jax.Array
 def observation_encoder(
     inputs: acme_wrappers.observation_action_reward.OAR,
     num_actions: int,
-    max_assemblies: int=cfg['max_assemblies']):
+    max_assemblies: int=configurations['parse']['max_assemblies'],
+    stack_max_blocks: int=configurations['stack_max_blocks'],
+    puzzle_max_blocks: int=configurations['puzzle_max_blocks']):
   """
   A neural network to encode the environment observation / state.
   In the case of parsing blocks, 
-    it creates embeddings for different stacks, pointer info, 
+    it creates embeddings for parse state, 
     and embeddings for previous reward and action,
     then it concatenates all embeddings as input.
   The neural network is a multi-layer perceptron with relu.
+  state = 
+    [cur stack readout (initialized as all -1s),
+    goal stack (copy of self.goal, replace None by -1),
+    fiber inhibition status (initialized as all closed 0s),
+    last activated assembly idx in the area (initialized as all -1s), 
+    number of blocks-connected assemblies in each area (initialized as 0s, or puzzle_max_blocks for BLOCKS area),
+    number of all assemblies in each area (initialized as 0s, or puzzle_max_blocks for BLOCKS area),
+    top block node area (initialized as -1), 
+    top block assembly idx in node area (initialized as -1), 
+    top block idx (initialized as -1),
+    is last block (initialized as 0)]
 
   Returns:
     The output of the neural network, ie. the encoded representation.
   """
   # embeddings for different elements in state repr
-  state_embed = hk.Linear(512, w_init=hk.initializers.TruncatedNormal())
+  import envs.blocksworld.cfg as bwcfg
+  num_areas = bwcfg.configurations['parse']['num_areas']
+  num_fibers = bwcfg.configurations['parse']['num_fibers']
+  assert type(bwcfg.configurations['parse']['num_areas'])==int, f"{bwcfg.configurations['parse']['num_areas']}"
+  curstack_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+  cut1 = stack_max_blocks
+  goalstack_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+  cut2 = cut1 + stack_max_blocks
+  fiber_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+  cut3 = cut2 + num_fibers
+  lastass_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+  cut4 = cut3 + num_areas
+  nblass_embed = hk.Linear(512, w_init=hk.initializers.TruncatedNormal())
+  cut5 = cut4 + num_areas
+  nass_embed = hk.Linear(512, w_init=hk.initializers.TruncatedNormal())
+  cut6 = cut5 + num_areas
+  topn_embed = hk.Linear(64, w_init=hk.initializers.TruncatedNormal())
+  cut7 = cut6+1
+  topa_embed = hk.Linear(64, w_init=hk.initializers.TruncatedNormal())
+  cut8 = cut7+1
+  topb_embed = hk.Linear(64, w_init=hk.initializers.TruncatedNormal())
+  cut9 = cut8+1
+  islast_embed = hk.Linear(64, w_init=hk.initializers.TruncatedNormal())
   # embeddings for prev reward and action
   reward_embed = hk.Linear(128, w_init=hk.initializers.RandomNormal())
   action_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
@@ -114,7 +152,16 @@ def observation_encoder(
   def fn(x, dropout_rate=None):
     # concatenate embeddings and previous reward and action
     x = jnp.concatenate((
-        state_embed(jax.nn.one_hot(x.observation, max_assemblies).reshape(-1)),
+        curstack_embed(jax.nn.one_hot(x.observation[:cut1], puzzle_max_blocks).reshape(-1)),
+        goalstack_embed(jax.nn.one_hot(x.observation[cut1:cut2], puzzle_max_blocks).reshape(-1)),
+        fiber_embed(jax.nn.one_hot(x.observation[cut2:cut3], 2).reshape(-1)),
+        lastass_embed(jax.nn.one_hot(x.observation[cut3:cut4], max_assemblies).reshape(-1)),
+        nblass_embed(jax.nn.one_hot(x.observation[cut4:cut5], max_assemblies).reshape(-1)),
+        nass_embed(jax.nn.one_hot(x.observation[cut5:cut6], max_assemblies).reshape(-1)),
+        topn_embed(jax.nn.one_hot(x.observation[cut6:cut7], 3).reshape(-1)),
+        topa_embed(jax.nn.one_hot(x.observation[cut7:cut8], max_assemblies).reshape(-1)),
+        topb_embed(jax.nn.one_hot(x.observation[cut8:cut9], puzzle_max_blocks).reshape(-1)),
+        islast_embed(jax.nn.one_hot(x.observation[cut9:], 2).reshape(-1)),
         reward_embed(jnp.expand_dims(x.reward, 0)), 
         action_embed(jax.nn.one_hot(x.action, num_actions))  
       ))
@@ -137,7 +184,8 @@ def make_qlearning_networks(
   Builds default R2D2 networks for Q-learning based on the environment specifications and configurations.
   """
   num_actions = int(env_spec.actions.maximum - env_spec.actions.minimum) + 1
-  assert num_actions == cfg['num_actions']
+  import envs.blocksworld.cfg as bwcfg
+  assert num_actions == bwcfg.configurations['parse']['num_actions']
 
   def make_core_module() -> q_learning.R2D2Arch:
 
@@ -162,13 +210,15 @@ class QObserver(basics.ActorObserver):
   Log observed information and visualizations to wandb.
   """
   def __init__(self,
-               period: int = 5000,
-               prefix: str = 'QObserver'):
+               period: int = obsfreq,
+               prefix: str = 'QObserver',
+               plot_every: int = plotfreq):
     super(QObserver, self).__init__()
     self.period = period
     self.prefix = prefix
     self.idx = -1
     self.logging = True
+    self.plot_every = plot_every
 
   def wandb_log(self, d: dict):
     if self.logging:
@@ -206,17 +256,23 @@ class QObserver(basics.ActorObserver):
     Should be time-step after selecting action"""
     self.timesteps.append(timestep)
 
-  def get_metrics(self, max_steps:int = cfg['max_steps']) -> Dict[str, any]:
+  def get_metrics(self, max_steps:int = configurations['parse']['max_steps']) -> Dict[str, any]:
     """Returns metrics collected for the current episode."""
     if self.idx==0 or (not self.idx % self.period == 0):
       return
     if not self.logging:
       return 
-    print('\nlogging!')
-    # first prediction is empty (None)
+    
+    print('\n\nlogging!')
+    import envs.blocksworld.cfg as bwcfg
+    max_steps = bwcfg.configurations['parse']['max_steps']
+    curriculum = bwcfg.configurations['parse']['cur_curriculum_level']
+    global up_pressure, down_pressure, UP_PRESSURE_THRESHOLD, DOWN_PRESSURE_THRESHOLD, UP_REWARD_THRESHOLD, DOWN_REWARD_THRESHOLD
+    tmp_down_threshold = DOWN_PRESSURE_THRESHOLD * (curriculum-1) if 2<=curriculum<=bwcfg.configurations['stack_max_blocks'] else DOWN_PRESSURE_THRESHOLD*bwcfg.configurations['stack_max_blocks'] # adjust threshold for higher curriculum
+    print(f"current curriculum {curriculum}, up_pressure {up_pressure} / {UP_PRESSURE_THRESHOLD}, down_pressure {down_pressure} / {tmp_down_threshold}")
     results = {}
-    action_dict = cfg['action_dict']
-    q_values = [s.predictions for s in self.actor_states[1:]]
+    action_dict = bwcfg.configurations['parse']['action_dict']
+    q_values = [s.predictions for s in self.actor_states[1:]] # first prediction is empty (None)
     q_values = jnp.stack(q_values)
     npreds = len(q_values)
     actions = jnp.stack(self.actions)[:npreds]
@@ -224,49 +280,104 @@ class QObserver(basics.ActorObserver):
     action_names = [action_dict[a.item()] for a in actions]
     rewards = jnp.stack([t.reward for t in self.timesteps[1:]])
     observations = jnp.stack([t.observation.observation for t in self.timesteps[1:]])
+    # current episode reward
+    episode_reward = jnp.sum(rewards)
+    results['episode_reward'] = episode_reward 
     # log the metrics
     results["actions"] = actions
     results["action_names"] = action_names
     results["q_values"] = q_values
     results["rewards"] = rewards
     results["observations"] = observations 
-    # plot reward vs q value pred
-    fig, ax = plt.subplots()
-    ax.plot(q_values, label='q_values')
-    ax.plot(rewards, label='rewards')
-    ax.set_xlabel('step')
-    total_reward = rewards.sum()
-    ax.set_title(f"Total reward:\nR={total_reward}")
-    ax.legend()
-    ax.set_ylim(-1.1, 1.1)
-    ax.set_xlim(0, max_steps)
-    self.wandb_log({f"{self.prefix}/reward_prediction": wandb.Image(fig)}) # Log the plot to wandb
-    plt.close(fig) # Close the plot
-    # plot each state action in the episode
-    # fig, ax = plt.subplots(max_steps//10, 10, figsize=(50,9*(max_steps//10))) # 10 plots a row
-    # stateh = observations[0].shape[0]
-    # statew = observations[0].shape[1]
-    # extent = (0, statew, stateh, 0)
-    # for t in range(npreds):
-    #   irow = t//10
-    #   jcol = t%10
-    #   ax[irow,jcol].imshow(observations[t], cmap="binary", vmin=0, vmax=1, extent=extent)
-    #   ax[irow,jcol].grid(color='gray', linewidth=2)
-    #   ax[irow,jcol].set_xticks(np.arange(statew))
-    #   ax[irow,jcol].set_yticks(np.arange(stateh))
-    #   ax[irow,jcol].set_title(f"A={action_names[t]}\nR={rewards[t]}\nQ={q_values[t]}")
-    # self.wandb_log({f"{self.prefix}/trajectory": wandb.Image(fig)})
-    # plt.close(fig)
-    for t in range(npreds): # print actions 
-      print(f"t={t}, A={action_names[t]}, R={rewards[t]}, Q={q_values[t]}")
-    
-    # current episode reward
-    episode_reward = jnp.sum(rewards)
-    print(f'current episode rewards {episode_reward}')
-    results['episode_reward'] = episode_reward
-    
+    # plot actions
+    if self.idx % self.plot_every == 0:
+      fig, ax = plt.subplots(max_steps//10, 10, figsize=(30, 4.9*(max_steps//10)))
+      cut1 = bwcfg.configurations['stack_max_blocks'] # cur stack
+      cut2 = cut1 + bwcfg.configurations['stack_max_blocks'] # goal stack
+      cut3 = cut2 + bwcfg.configurations['parse']['num_fibers'] # fiber status
+      cut4 = cut3 + bwcfg.configurations['parse']['num_areas'] # last active assembly
+      cut5 = cut4 + bwcfg.configurations['parse']['num_areas'] # num blocks related assembly
+      cut6 = cut5 + bwcfg.configurations['parse']['num_areas'] # num total assembly
+      cut7 = cut6+1 # top node area
+      cut8 = cut7+1 # top area assembly
+      cut9 = cut8+1 # top block id, then is_last_block
+      for t in range(npreds):
+        irow = t//10
+        jcol = t%10
+        ax[irow,jcol].axhline(y=10, xmin=0, xmax=10)
+        ax[irow,jcol].text(0.2, 9, f"Curr:\n{observations[t][:cut1]}", 
+                          style='italic', bbox={'facecolor': 'orange', 'alpha': 0.2, 'pad': 1})
+        ax[irow,jcol].text(0.2, 7.5, f"Goal:\n{observations[t][cut1:cut2]}", 
+                          style='italic', bbox={'facecolor': 'green', 'alpha': 0.2, 'pad': 1})
+        ax[irow,jcol].text(0.2, 6, f"Fiber:\n{observations[t][cut2:cut3]}", 
+                          style='italic', bbox={'facecolor': 'red', 'alpha': 0.2, 'pad': 1})
+        ax[irow,jcol].text(0.2, 5, f"Last a: {observations[t][cut3:cut4]}", 
+                          style='italic', bbox={'facecolor': 'pink', 'alpha': 0.2, 'pad': 1})
+        ax[irow,jcol].text(0.2, 4, f"Num ba: {observations[t][cut4:cut5]}", 
+                          style='italic', bbox={'facecolor': 'gray', 'alpha': 0.2, 'pad': 1})
+        ax[irow,jcol].text(0.2, 3, f"Num a: {observations[t][cut5:cut6]}", 
+                          style='italic', bbox={'facecolor': 'gray', 'alpha': 0.2, 'pad': 1})
+        ax[irow,jcol].text(0.2, 2, f"Top N: {observations[t][cut6:cut7]}, Top a: {observations[t][cut7:cut8]}", 
+                          style='italic', bbox={'facecolor': 'white', 'alpha': 0.2, 'pad': 1})
+        ax[irow,jcol].text(0.2, 1.5, f"Top b: {observations[t][cut8:cut9]}", 
+                          style='italic', bbox={'facecolor': 'white', 'alpha': 0.2, 'pad': 1})
+        ax[irow,jcol].text(0.2, 0.5, f"Islastb: {observations[t][cut9:]}", 
+                          style='italic', bbox={'facecolor': 'white', 'alpha': 0.2, 'pad': 1})
+        ax[irow,jcol].set_xticks([])
+        ax[irow,jcol].set_yticks([])
+        ax[irow,jcol].set_ylim(0,10.1)
+        ax[irow,jcol].set_xlim(0,10.1)
+        ax[irow,jcol].set_title(f"{action_names[t]}\nR={round(float(rewards[t]),5)}, Q={round(float(q_values[t]),5)}", fontsize=10)
+      plt.suptitle(t=f"Curriculum {curriculum}, up_pressure {up_pressure} / {UP_PRESSURE_THRESHOLD}, down_pressure {down_pressure} / {tmp_down_threshold}\nepisode reward={episode_reward}",
+                    x=0.5, y=0.89)
+      self.wandb_log({f"{self.prefix}/trajectory": wandb.Image(fig)})
+      plt.close(fig)
+    # print first 50 actions
+    for t in range(min(npreds, 50)): 
+      print(f"t={t}, A={action_names[t]}, R={round(float(rewards[t]),5)}, Q={round(float(q_values[t]),5)}, state={observations[t]}")
+    print(f'\ncurrent episode rewards {episode_reward}')
+    # check curriculum
+    if episode_reward > UP_REWARD_THRESHOLD:
+      up_pressure += 1
+      down_pressure = 0
+      print(f"up_pressure + 1 = {up_pressure} / {UP_PRESSURE_THRESHOLD}")
+    elif episode_reward < DOWN_REWARD_THRESHOLD:
+      down_pressure += 1
+      up_pressure = 0
+      print(f"down_pressure + 1 = {down_pressure} / {tmp_down_threshold}")
+    else: # reset up and down pressure
+      up_pressure = 0
+      down_pressure = 0
+    if up_pressure >= UP_PRESSURE_THRESHOLD: # up pressure reached threshold
+      if 1<=curriculum<=configurations['stack_max_blocks']-1:
+        curriculum += 1
+        print(f'up_pressure reached threshold, increasing curriculum from {curriculum-1} to {curriculum}')
+      elif curriculum==configurations['stack_max_blocks']:
+        curriculum = 0
+        print(f"up_pressure reached threshold, increasing curriculum from {bwcfg.configurations['stack_max_blocks']} to {curriculum}")
+      elif curriculum==0: 
+        print(f'up_pressure reached threshold, continuing curriculum {curriculum}')
+      else:
+        raise ValueError(f"curriculum {curriculum} should be int in set(0, 2, 3, ..., 7)")
+      up_pressure = 0 # release pressure
+    elif down_pressure >= tmp_down_threshold: # down pressure reached threshold
+      if 2<=curriculum<=configurations['stack_max_blocks']:
+        curriculum -= 1
+        print(f'down_pressure reached threshold, decreasing curriculum from {curriculum+1} to {curriculum}')
+      elif curriculum==0:
+        curriculum = configurations['stack_max_blocks']
+        print(f"down_pressure reached threshold, falling back from curriculum 0 to {curriculum}")
+      elif curriculum==1:
+        curriculum = 1
+        print(f"down_pressure reached threshold, continuing curriculum {curriculum}")
+      else:
+        raise ValueError(f"curriculum {curriculum} should be int in set(0, 2, 3, ..., 7)")
+      down_pressure = 0 # release pressure
+    bwcfg.configurations['parse']['cur_curriculum_level'] = curriculum # update curriculum in cfg file
+    print('logging ends\n\n')
     return results
   
+
 def make_environment(seed: int ,
                      evaluation: bool = False,
                      **kwargs) -> dm_env.Environment:
@@ -282,8 +393,13 @@ def make_environment(seed: int ,
   # create dm_env
   sim = parse.Simulator()
   sim.reset()
-  cfg['num_actions'] = sim.num_actions
-  cfg['action_dict'] = sim.action_dict
+
+  import envs.blocksworld.cfg as bwcfg
+  bwcfg.configurations['parse']['num_actions'] = sim.num_actions
+  bwcfg.configurations['parse']['action_dict'] = sim.action_dict
+  bwcfg.configurations['parse']['num_fibers'] = sim.num_fibers
+  bwcfg.configurations['parse']['num_areas'] = sim.num_areas
+  assert type(bwcfg.configurations['parse']['num_areas'])==int, f"{bwcfg.configurations['parse']['num_areas']}"
   env = parse.EnvWrapper(sim)
 
   # add acme wrappers
@@ -556,15 +672,16 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['1Parse']),
-            "num_steps": tune.grid_search([200e6]),
+            "group": tune.grid_search(['.95palong']),
+            "num_steps": tune.grid_search([500e6]),
 
-            "samples_per_insert": tune.grid_search([6.0, 10.0, 20.0, 50.0]),
-            "learning_rate": tune.grid_search([1e-4]),
-            "epsilon_begin": tune.grid_search([0.9]),
+            "samples_per_insert": tune.grid_search([20.0]),
+            "batch_size": tune.grid_search([128]),
+            "trace_length": tune.grid_search([10]),
+            "learning_rate": tune.grid_search([1e-3]),
             "agent": tune.grid_search(['qlearning']),
-            "state_dim": tune.grid_search([512]),
-            "q_dim": tune.grid_search([512]),
+            "state_dim": tune.grid_search([1024]),
+            "q_dim": tune.grid_search([1024]),
         }
     ]
   else:

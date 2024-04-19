@@ -46,7 +46,7 @@ class Simulator():
 		self.skip_relocated = skip_relocated
 		self.verbose = verbose
 		self.area_status = area_status # area attributes to encode in state, default ['last_activated', 'num_block_assemblies', 'num_total_assemblies']
-		self.num_areas = len(self.all_areas)
+		self.num_areas = len(self.node_areas) + 1 + 1 if self.skip_relocated else len(self.all_areas)
 		self.action_dict = self.create_action_dictionary() 
 		self.num_actions = len(self.action_dict)
 		self.num_assemblies = self.puzzle_max_blocks # total number of assemblies ever created
@@ -104,6 +104,8 @@ class Simulator():
 			num_blocks: (int)
 				the number of blocks in goal for this episode
 		'''
+		if cur_curriculum_level==0: # uniform
+			return random.randint(1, self.stack_max_blocks)
 		assert 1 <= cur_curriculum_level <= self.stack_max_blocks, f"should have 1<= cur_curriculum_level ({cur_curriculum_level}) <= {self.stack_max_blocks}"
 		population = list(range(1, self.stack_max_blocks+1)) # possible number of blocks
 		weights = np.zeros(self.stack_max_blocks)
@@ -114,13 +116,15 @@ class Simulator():
 		num_blocks = random.choices(population=population, weights=weights, k=1)[0]
 		return num_blocks
 
-	def reset(self, shuffle=True, difficulty_mode='uniform', cur_curriculum_level=None):
+	def reset(self, shuffle=True, difficulty_mode='curriculum', cur_curriculum_level=0):
 		'''
 		Reset environment for new episode.
 		Return:
 			state: (numpy array with float32)
 			info: (any=None)
 		'''
+		import envs.blocksworld.cfg as config
+		cur_curriculum_level = config.configurations['parse']['cur_curriculum_level']
 		self.num_blocks, self.goal = self.__create_episode(shuffle=shuffle, difficulty_mode=difficulty_mode, cur_curriculum_level=cur_curriculum_level)
 		self.unit_reward = utils.calculate_unit_reward(self.reward_decay_factor, len(self.goal), self.episode_max_reward)
 		self.state, self.action_to_statechange, self.area_to_stateidx, self.stateidx_to_fibername, self.assembly_dict, self.last_active_assembly = self.create_state_representation()
@@ -252,7 +256,6 @@ class Simulator():
 			truncated = True
 		terminated = self.all_correct and utils.all_fiber_closed(self.state, self.stateidx_to_fibername)
 		return self.state.copy(), reward, terminated, truncated, info
-
 
 	def create_state_representation(self):
 		'''
@@ -413,7 +416,6 @@ class Simulator():
 				assembly_dict, \
 				last_active_assembly
 
-
 	def create_action_dictionary(self):
 		'''
 		Create action dictionary: a dict that contains mapping of action index to action name
@@ -452,7 +454,6 @@ class Simulator():
 		# silence head
 		dictionary[idx] = ("silence_head", None)
 		return dictionary
-
 
 
 def test_simulator(stack_max_blocks=7, expert=True, repeat=10, verbose=False):
@@ -558,9 +559,6 @@ class EnvWrapper(dm_env.Environment):
 		self._environment.close()
 		
 
-
-
-
 def _convert_to_spec(space: Any,
 					name: Optional[str] = None) -> types.NestedSpec:
 	"""
@@ -616,11 +614,12 @@ class Test(test_utils.EnvironmentTestMixin, absltest.TestCase):
 		for _ in range(200):
 			yield self.make_action()
 
+
 if __name__ == "__main__":
 
 	# random.seed(1)
 	test_simulator(stack_max_blocks=7, expert=False, repeat=500, verbose=False)
-	test_simulator(stack_max_blocks=7, expert=True, repeat=200, verbose=False)
+	test_simulator(stack_max_blocks=7, expert=True, repeat=100, verbose=False)
 	
 	absltest.main()
 

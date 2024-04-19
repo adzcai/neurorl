@@ -41,6 +41,9 @@ def init_simulator_areas(max_stacks=1,
 			list containing the names of all areas in the brain (including head, nodes, blocks, and relocated)
 		head: (string)
 			the name of the head area
+		prefixed_node_areas
+		relocated_area
+		blocks_area
 	'''
 	assert max_stacks == 1, f"envs.blocksworld.utils max_stacks should be 1, but has {max_stacks}"
 	# generate names for node areas
@@ -649,7 +652,7 @@ def expert_demo_remove(simulator):
 				final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index((aname, arg2, arg1))] )
 	random.shuffle(final_actions)
 	# check is last block
-	if is_last_block(simulator.assembly_dict, simulator.head, top_area_name, top_area_a, simulator.blocks_area): 
+	if simulator.goal[0]==None or (is_last_block(simulator.assembly_dict, simulator.head, top_area_name, top_area_a, simulator.blocks_area)): 
 		final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(("silence_head", None))] )
 		random.shuffle(final_actions)
 		return final_actions
@@ -981,10 +984,14 @@ def sample_random_puzzle(puzzle_max_stacks, puzzle_max_blocks, stack_max_blocks,
 			else:
 				population = list(range(2, puzzle_max_blocks+1)) # possible number of blocks in puzzle
 				weights = np.zeros_like(population, dtype=np.float32)
-				weights[curriculum-2] += 0.7 # weight for current level
+				# weights[curriculum-2] += 0.7 # weight for current level
+				# weights[max(curriculum-3, 0)] += 0.15 # weight for the prev level
+				# weights[: max(curriculum-3, 1)] += 0.15 / max(curriculum-3, 1) # weight for easier levels. harder levels are 0
+				weights[curriculum-2] += 0.6 # weight for current level
 				weights[max(curriculum-3, 0)] += 0.15 # weight for the prev level
-				weights[: max(curriculum-3, 1)] += 0.15 / max(curriculum-3, 1)
-				assert np.sum(weights)==1, f"weights {weights} should sum to 1"
+				weights[: max(curriculum-3, 1)] += 0.15 / max(curriculum-3, 1) # easier levels
+				weights[min(curriculum-1, len(population)-1):] += 0.1 / (len(population)-min(curriculum-1,len(population)-1)) # harder levels
+				assert np.isclose(np.sum(weights), 1), f"weights {weights} should sum to 1, but have {np.sum(weights)}"
 				puzzle_num_blocks = random.choices(population=population, weights=weights, k=1)[0]
 		# input stacks
 		available_blocks = list(range(puzzle_num_blocks)) # pool of all block ids for this puzzle

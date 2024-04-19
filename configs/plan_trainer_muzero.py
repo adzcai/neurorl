@@ -5,7 +5,7 @@ module load python/3.10.12-fasrc01
 mamba activate neurorl
 
 // launch parallel job
-python configs/plan_trainer.py \
+python configs/plan_trainer_muzero.py \
   --search='initial' \
   --parallel='sbatch' \
   --num_actors=1 \
@@ -17,7 +17,7 @@ python configs/plan_trainer.py \
   --time=0-12:00:00 
 
 // test in interactive session
-python configs/plan_trainer.py \
+python configs/plan_trainer_muzero.py \
   --search='initial' \
   --parallel='none' \
   --run_distributed=True \
@@ -63,8 +63,8 @@ import library.networks as networks
 from envs.blocksworld import plan
 from envs.blocksworld.cfg import configurations 
 
-obsfreq = 5000 # frequency to call observer
-plotfreq = 50000 # frequency to plot action trajectory
+obsfreq = 500 # frequency to call observer
+plotfreq = 500 # frequency to plot action trajectory
 UP_PRESSURE_THRESHOLD = 5 # pressure threshold to increase curriculum
 DOWN_PRESSURE_THRESHOLD = 10 # pressure threshold to decrease curriculum
 UP_REWARD_THRESHOLD = 0.8 # upper reward threshold for incrementing up pressure
@@ -155,42 +155,112 @@ def observation_encoder(
   return fn(inputs)
 
 
-def make_qlearning_networks(
-        env_spec: specs.EnvironmentSpec,
-        config: q_learning.Config,
-        ):
-  """
-  Builds default R2D2 networks for Q-learning based on the environment specifications and configurations.
-  """
+def make_muzero_networks(
+    env_spec: specs.EnvironmentSpec,
+    config: muzero.Config,
+    **kwargs) -> muzero.MuZeroNetworks:
+  """Builds default MuZero networks for BabyAI tasks."""
+
   num_actions = int(env_spec.actions.maximum - env_spec.actions.minimum) + 1
-  import envs.blocksworld.cfg as bwcfg
-  assert num_actions == bwcfg.configurations['plan']['num_actions']
 
-  def make_core_module() -> q_learning.R2D2Arch:
+  def make_core_module() -> muzero.MuZeroNetworks:
+    observation_fn = functools.partial(observation_encoder,
+                                       num_actions=num_actions)
+    observation_fn = hk.to_module(observation_fn)('obs_fn')
+    state_fn = networks.DummyRNN()
+    def transition_fn(action: int, state: State):
+      # Setup transition function: ResNet. action: [A], state: [D]
+      action_onehot = jax.nn.one_hot(
+          action, num_classes=num_actions)
+      assert action_onehot.ndim in (1, 2), "should be [A] or [B, A]"
 
-    observation_fn = functools.partial(
-      observation_encoder, 
-      num_actions=num_actions)
-    return q_learning.R2D2Arch(
-      torso=hk.to_module(observation_fn)('obs_fn'),
-      memory=networks.DummyRNN(),  # nothing happens
-      head=duelling.DuellingMLP(num_actions,
-                                hidden_sizes=[config.q_dim]))
+      def _transition_fn(action_onehot, state):
+        """ResNet transition model that scales gradient."""
+        out = muzero_mlps.SimpleTransition(
+            num_blocks=config.transition_blocks)(
+            action_onehot, state)
+        out = muzero.scale_gradient(out, config.scale_grad)
+        return out, out
+      if action_onehot.ndim == 2:
+        _transition_fn = jax.vmap(_transition_fn)
+      return _transition_fn(action_onehot, state)
+    transition_fn = hk.to_module(transition_fn)('transition_fn')
 
-  return networks_lib.make_unrollable_network(
-    env_spec, make_core_module)
+    # Setup prediction functions: policy, value, reward
+    root_value_fn = hk.nets.MLP(
+        (128, 32, config.num_bins), name='pred_root_value')
+    root_policy_fn = hk.nets.MLP(
+        (128, 32, num_actions), name='pred_root_policy')
+    model_reward_fn = hk.nets.MLP(
+        (32, 32, config.num_bins), name='pred_model_reward')
 
+    if config.seperate_model_nets: # what is typically done
+      model_value_fn = hk.nets.MLP(
+          (128, 32, config.num_bins), name='pred_model_value')
+      model_policy_fn = hk.nets.MLP(
+          (128, 32, num_actions), name='pred_model_policy')
+    else:
+      model_value_fn = root_value_fn
+      model_policy_fn = root_policy_fn
 
-class QObserver(basics.ActorObserver):
+    def root_predictor(state: State):
+      assert state.ndim in (1, 2), "should be [D] or [B, D]"
+
+      def _root_predictor(state: State):
+        policy_logits = root_policy_fn(state)
+        value_logits = root_value_fn(state)
+
+        return muzero.RootOutput(
+            state=state,
+            value_logits=value_logits,
+            policy_logits=policy_logits,
+        )
+      if state.ndim == 2:
+        _root_predictor = jax.vmap(_root_predictor)
+      return _root_predictor(state)
+
+    def model_predictor(state: State):
+      assert state.ndim in (1, 2), "should be [D] or [B, D]"
+
+      def _model_predictor(state: State):
+        reward_logits = model_reward_fn(state)
+
+        policy_logits = model_policy_fn(state)
+        value_logits = model_value_fn(state)
+
+        return muzero.ModelOutput(
+            new_state=state,
+            value_logits=value_logits,
+            policy_logits=policy_logits,
+            reward_logits=reward_logits,
+        )
+      if state.ndim == 2:
+        _model_predictor = jax.vmap(_model_predictor)
+      return _model_predictor(state)
+
+    return muzero.MuZeroArch(
+        observation_fn=observation_fn,
+        state_fn=state_fn,
+        transition_fn=transition_fn,
+        root_pred_fn=root_predictor,
+        model_pred_fn=model_predictor)
+
+  return muzero.make_network(
+    environment_spec=env_spec,
+    make_core_module=make_core_module,
+    **kwargs)
+  
+
+class MuObserver(basics.ActorObserver):
   """
   An observer for tracking actions, rewards, and states during experiment.
   Log observed information and visualizations to wandb.
   """
   def __init__(self,
                period: int = obsfreq,
-               prefix: str = 'QObserver',
+               prefix: str = 'MuObserver',
                plot_every: int = plotfreq):
-    super(QObserver, self).__init__()
+    super(MuObserver, self).__init__()
     self.period = period
     self.prefix = prefix
     self.idx = -1
@@ -239,7 +309,6 @@ class QObserver(basics.ActorObserver):
       return
     if not self.logging:
       return 
-
     print('\n\nlogging!')
     import envs.blocksworld.cfg as bwcfg
     max_steps = bwcfg.configurations['plan']['max_steps']
@@ -250,11 +319,8 @@ class QObserver(basics.ActorObserver):
     # first prediction is empty (None)
     results = {}
     action_dict = bwcfg.configurations['plan']['action_dict']
-    q_values = [s.predictions for s in self.actor_states[1:]]
-    q_values = jnp.stack(q_values)
-    npreds = len(q_values)
+    npreds = len(self.actor_states[1:])
     actions = jnp.stack(self.actions)[:npreds]
-    q_values = rlax.batched_index(q_values, actions)
     action_names = [action_dict[a.item()] for a in actions]
     rewards = jnp.stack([t.reward for t in self.timesteps[1:]])
     observations = jnp.stack([t.observation.observation for t in self.timesteps[1:]])
@@ -264,7 +330,6 @@ class QObserver(basics.ActorObserver):
     # log the metrics
     results["actions"] = actions
     results["action_names"] = action_names
-    results["q_values"] = q_values
     results["rewards"] = rewards
     results["observations"] = observations 
     # plot actions
@@ -297,16 +362,16 @@ class QObserver(basics.ActorObserver):
         ax[irow,jcol].set_yticks([])
         ax[irow,jcol].set_ylim(0,19.1)
         ax[irow,jcol].set_xlim(0,10.1)
-        ax[irow,jcol].set_title(f"A={action_names[t]}\nR={round(float(rewards[t]),5)}\nQ={round(float(q_values[t]),5)}")
+        ax[irow,jcol].set_title(f"A={action_names[t]}\nR={round(float(rewards[t]),5)}")
       plt.suptitle(t=f"Curriculum {curriculum}, up_pressure {up_pressure} / {UP_PRESSURE_THRESHOLD}, down_pressure {down_pressure} / {tmp_down_threshold}\nepisode reward={episode_reward}",
                     x=0.5, y=0.89)
       self.wandb_log({f"{self.prefix}/trajectory": wandb.Image(fig)})
       plt.close(fig)
     # print first 50 actions
     for t in range(min(npreds, 50)):
-      print(f"t={t}, A={action_names[t]}, R={round(float(rewards[t]),5)}, Q={round(float(q_values[t]),5)}, state={observations[t]}")
+      print(f"t={t}, A={action_names[t]}, R={round(float(rewards[t]),5)}, state={observations[t]}")
     print(f'\ncurrent episode rewards {episode_reward}')
-    # check curriculum
+    # check pressure for curriculum
     if episode_reward > UP_REWARD_THRESHOLD:
       up_pressure += 1
       down_pressure = 0
@@ -326,23 +391,19 @@ class QObserver(basics.ActorObserver):
       elif curriculum==configurations['puzzle_max_blocks']:
         curriculum = configurations['puzzle_max_blocks'] 
         print(f"up_pressure reached threshold, staying at curriculum {curriculum}")
-      elif curriculum==0: 
-        print(f'up_pressure reached threshold, staying at curriculum {curriculum}')
       else:
-        raise ValueError(f"curriculum {curriculum} should be int in set(0, 2, 3, ..., {configurations['puzzle_max_blocks']})")
+        raise ValueError(f"curriculum {curriculum} should be int in set(2, 3, ..., {configurations['puzzle_max_blocks']})")
       up_pressure = 0 # release pressure
     # down pressure reached threshold
     elif down_pressure >= tmp_down_threshold: 
       if 3<=curriculum<=configurations['puzzle_max_blocks']:
         curriculum -= 1
         print(f'down_pressure reached threshold, decreasing curriculum from {curriculum+1} to {curriculum}')
-      elif curriculum==0:
-        print(f"down_pressure reached threshold, staying at curriculum {curriculum}")
       elif curriculum==2:
         curriculum = 2
         print(f"down_pressure reached threshold, staying at curriculum {curriculum}")
       else:
-        raise ValueError(f"curriculum {curriculum} should be int in set(0, 2, 3, ..., {configurations['puzzle_max_blocks']})")
+        raise ValueError(f"curriculum {curriculum} should be int in set(2, 3, ..., {configurations['puzzle_max_blocks']})")
       down_pressure = 0 # release pressure
     bwcfg.configurations['plan']['curriculum'] = curriculum # update curriculum in cfg file
     print('logging ends\n\n')
@@ -395,51 +456,71 @@ def setup_experiment_inputs(
   """
   config_kwargs = agent_config_kwargs or dict()
   env_kwargs = env_kwargs or dict()
-
-  # -----------------------
   # load agent config, builder, network factory
-  # -----------------------
   agent = agent_config_kwargs.get('agent', '')
   assert agent != '', 'please set agent'
 
-  if agent == 'qlearning':
-    config = q_learning.Config(**config_kwargs)
+  if agent == 'muzero':
+    config = muzero.Config(**config_kwargs)
+    import mctx
+    # currently using same policy in learning and acting
+    mcts_policy = functools.partial(
+      mctx.gumbel_muzero_policy,
+      max_depth=config.max_sim_depth,
+      num_simulations=config.num_simulations,
+      gumbel_scale=config.gumbel_scale)
+
+    discretizer = utils.Discretizer(
+                  num_bins=config.num_bins,
+                  max_value=config.max_scalar_value,
+                  tx_pair=config.tx_pair,
+              )
+
     builder = basics.Builder(
       config=config,
+      get_actor_core_fn=functools.partial(
+          muzero.get_actor_core,
+          mcts_policy=mcts_policy,
+          discretizer=discretizer,
+      ),
       ActorCls=functools.partial(
         basics.BasicActor,
-        observers=[QObserver(period=1 if debug else obsfreq)],
+        observers=[MuObserver(period=1 if debug else obsfreq)],
         ),
-      LossFn=q_learning.R2D2LossFn(
+      optimizer_cnstr=muzero.muzero_optimizer_constr,
+      LossFn=muzero.MuZeroLossFn(
           discount=config.discount,
           importance_sampling_exponent=config.importance_sampling_exponent,
           burn_in_length=config.burn_in_length,
           max_replay_size=config.max_replay_size,
           max_priority_weight=config.max_priority_weight,
           bootstrap_n=config.bootstrap_n,
+          discretizer=discretizer,
+          mcts_policy=mcts_policy,
+          simulation_steps=config.simulation_steps,
+          #reanalyze_ratio=config.reanalyze_ratio,
+          reanalyze_ratio=0.25, # how frequently to tune value loss wrt tree node values (faster but less accurate)
+          root_policy_coef=config.root_policy_coef,
+          root_value_coef=config.root_value_coef,
+          model_policy_coef=config.model_policy_coef,
+          model_value_coef=config.model_value_coef,
+          model_reward_coef=config.model_reward_coef,
       ))
-    network_factory = functools.partial(make_qlearning_networks, config=config)
+    network_factory = functools.partial(make_muzero_networks, config=config)
   else:
     raise NotImplementedError(agent)
-
-  # -----------------------
   # load environment factory
-  # -----------------------
   environment_factory = functools.partial(
     make_environment,
     **env_kwargs)
-
-  # -----------------------
   # setup observer factory for environment
   # this logs the average every reset=50 episodes (instead of every episode)
-  # -----------------------
   observers = [
       utils.LevelAvgReturnObserver(
         reset=50,
         get_task_name=lambda e: "task"
         ),
       ]
-
   return experiment_builder.OnlineExperimentConfigInputs(
     agent=agent,
     agent_config=config,
@@ -456,8 +537,7 @@ def train_single(
     agent_config_kwargs: dict = None,
     log_dir: str = None,
     num_actors: int = 1,
-    run_distributed: bool = False,
-):
+    run_distributed: bool = False,):
   """
   Function for running individual training experiment.
   Set up logging, environment, and agent.
@@ -531,9 +611,7 @@ def setup_wandb_init_kwargs():
   return wandb_init_kwargs
 
 def run_single():
-  ########################
   # default settings
-  ########################
   env_kwargs = dict()
   agent_config_kwargs = dict()
   num_actors = FLAGS.num_actors
@@ -559,9 +637,7 @@ def run_single():
         date=True,
     )
 
-  ########################
   # override with config settings, e.g. from parallel run
-  ########################
   if FLAGS.config_file: # parallel run should pass in a config_file that's created online/temporarily
     configs = utils.load_config(FLAGS.config_file)
     config = configs[FLAGS.config_idx-1]  # FLAGS.config_idx starts at 1 with SLURM
@@ -641,16 +717,19 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['2~10plan5v8currleak']),
+            "group": tune.grid_search(['muz2~10plan5v8']),
             "num_steps": tune.grid_search([500e6]),
 
             "samples_per_insert": tune.grid_search([20.0]),
             "batch_size": tune.grid_search([128]),
             "trace_length": tune.grid_search([10]),
             "learning_rate": tune.grid_search([1e-3]),
-            "agent": tune.grid_search(['qlearning']),
+
+            "agent": tune.grid_search(['muzero']),
+            "num_bins": tune.grid_search([1001]),  # for muzero
+            "num_simulations": tune.grid_search([10]), # for muzero
+
             "state_dim": tune.grid_search([1024]),
-            "q_dim": tune.grid_search([1024]),
         }
     ]
   else:

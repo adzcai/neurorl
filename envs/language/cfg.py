@@ -1,7 +1,7 @@
 configurations = {
-'stack_max_blocks': 7, # max num of blocks in any stack
+'max_input_length': 3, # max num of words in input sentence
 'max_lexicon': 20, # max num different words in the dictionary
-'puzzle_max_stacks': 5, # maximum number of stacks allowed in a puzzle
+'max_complexity': 3, # max num of words in a valid sentence sample
 'episode_max_reward': 1, # max reward for solving the entire episode correctly
 
 'max_steps': 200, # maximum number of actions allowed in each episode

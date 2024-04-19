@@ -21,20 +21,29 @@ class Simulator(parse.Simulator):
 				max_steps = cfg['max_steps'],
 				action_cost = cfg['action_cost'],
 				reward_decay_factor = cfg['reward_decay_factor'],
+				maxnprocesses = cfg['maxnprocesses'],
 				verbose=False):
 		super().__init__(max_steps = max_steps,
 						action_cost = action_cost,
 						reward_decay_factor = reward_decay_factor,
 						verbose = verbose)
-		self.maxnprocesses = self.stack_max_blocks*2
+		self.maxnprocesses = maxnprocesses
 		assert cfg['cfg'] == 'add', f"cfg is {cfg['cfg']}"
 
-
-
-	def __create_parse_goal(self, shuffle=True):
-		# assuming uniform parse goal 
+	def __create_parse_goal(self, shuffle=True, cur_curriculum_level=-1):
+		# cur_curriculum_level: {-1, 1,2,...,max_stack_blocks}
 		goal = [None] * self.stack_max_blocks # dummy goal template, to be filled
-		num_blocks = random.randint(1, self.stack_max_blocks)
+		num_blocks = None
+		if cur_curriculum_level==-1:
+			num_blocks = random.randint(1, self.stack_max_blocks)
+		else:
+			cur_curriculum_level = max(cur_curriculum_level, 1)
+			population = list(range(1, self.stack_max_blocks+1))
+			weights = np.zeros_like(population, dtype=np.float32)
+			weights[cur_curriculum_level-1] += 0.7 # weight for current level
+			weights[max(cur_curriculum_level-2, 0)] += 0.15 # weight for the prev level
+			weights[: max(cur_curriculum_level-2, 1)] += 0.15 / max(cur_curriculum_level-2, 1) # weight for easier level
+			num_blocks = random.choices(population=population, weights=weights, k=1)[0]
 		assert num_blocks <= self.stack_max_blocks, \
 			f"number of actual blocks to parse {num_blocks} should be smaller than stack_max_blocks {self.stack_max_blocks}"
 		stack = random.sample(list(range(self.puzzle_max_blocks)), num_blocks) # the actual blocks in the stack
@@ -43,7 +52,10 @@ class Simulator(parse.Simulator):
 		goal[:num_blocks] = stack
 		return num_blocks, goal
 
-	def __curriculum(self, cur_curriculum_level):
+	def __curriculum(self, cur_curriculum_level=-1):
+		# sample num processes given current level
+		if cur_curriculum_level==-1: # uniform
+			return random.randint(0, self.maxnprocesses)
 		population = list(range(self.maxnprocesses+1))
 		weights = np.zeros_like(population, dtype=np.float32)
 		weights[cur_curriculum_level] += 0.7 # weight for current level
@@ -53,14 +65,14 @@ class Simulator(parse.Simulator):
 		nprocesses = random.choices(population=population, weights=weights, k=1)[0]
 		return nprocesses
 
-	def reset(self, shuffle=True, difficulty_mode='uniform', cur_curriculum_level=None):
+	def reset(self, shuffle=True, difficulty_mode='uniform', cur_curriculum_level=-1):
 		'''
 		Reset environment for new episode.
 		Input:
 			shuffle: (boolean=True)
-				whether to shuffle parse goal (parse goal will be of uniform length)
-			difficulty_mode: {'uniform', 'curriculum'}
-				first remove uniform number of blocks from parsed goal
+				whether to shuffle parse goal (parse goal will be of uniform num of blocks)
+			difficulty_mode: {'uniform', 'curriculum', int}
+				first remove/add arbitrary num of blocks from parsed goal
 				then the difficulty_mode determines number of processes (add/remove) before creating the final goal
 			cur_curriculum_level: {None, 0, 1, ..., self.maxnprocesses}
 				if not None, determines number of blocks added after remove
@@ -68,7 +80,9 @@ class Simulator(parse.Simulator):
 			state: (numpy array with float32)
 			info: (any=None)
 		'''
-		self.num_blocks, self.goal = self.__create_parse_goal(shuffle=shuffle)
+		import envs.blocksworld.cfg as config
+		cur_curriculum_level = config.configurations['add']['cur_curriculum_level']
+		self.num_blocks, self.goal = self.__create_parse_goal(shuffle=shuffle, cur_curriculum_level=cur_curriculum_level)
 		self.unit_reward = utils.calculate_unit_reward(self.reward_decay_factor, len(self.goal), self.episode_max_reward)
 		self.state, self.action_to_statechange, self.area_to_stateidx, self.stateidx_to_fibername, self.assembly_dict, self.last_active_assembly = self.create_state_representation()
 		self.num_fibers = len(self.stateidx_to_fibername.keys())
@@ -84,14 +98,14 @@ class Simulator(parse.Simulator):
 		# decide number of add/remove before returning final goal
 		nprocesses = random.randint(0, self.maxnprocesses) if self.num_blocks!=self.stack_max_blocks else random.randint(1, self.maxnprocesses)
 		if difficulty_mode == 'curriculum':
-			assert type(cur_curriculum_level)==int and cur_curriculum_level>=0, f"difficulty_mode is curriculum but cur_curriculum_level is {cur_curriculum_level}"
+			assert type(cur_curriculum_level)==int, f"difficulty_mode is curriculum but cur_curriculum_level is {cur_curriculum_level}"
 			nprocesses = self.__curriculum(cur_curriculum_level)
 		elif difficulty_mode != 'uniform':
 			assert type(difficulty_mode) == int and difficulty_mode>=0, f"difficulty_mode {difficulty_mode} should be int>=0"
 			nprocesses = difficulty_mode
 		if (self.num_blocks==self.stack_max_blocks) and (nprocesses==0):
 			nprocesses = 1 # full stack, need at least 1 process
-			print(f'self.num_blocks==self.stack_max_blocks and nprocesses=0, adjusted nprocesses to 1')
+			# print(f'self.num_blocks==self.stack_max_blocks and nprocesses=0, adjusted nprocesses to 1')
 		# do n rounds of add/remove 
 		for iproc in range(nprocesses): 
 			curprocess = random.choice(['add', 'remove'])
@@ -163,7 +177,7 @@ class Simulator(parse.Simulator):
 		self.just_projected = False # reset 
 		self.all_correct = False # reset
 		info = None
-		print(f"final add goal ready: {self.goal}")
+		# print(f"final add goal ready: {self.goal}")
 		return self.state.copy(), info
 
 
@@ -186,8 +200,8 @@ def test_simulator(expert=True, repeat=10, verbose=False):
 				action_idx = random.choice(list(range(sim.num_actions))) if (not expert) else expert_demo[t]
 				next_state, reward, terminated, truncated, info = sim.step(action_idx)
 				rtotal += reward
-				print(f't={t},\tr={round(reward, 5)},\taction={action_idx}\t{sim.action_dict[action_idx]},\ttruncated={truncated},\tdone={terminated},\n\tjust_projected={sim.just_projected}, all_correct={sim.all_correct}, correct_record={sim.correct_record}')  if verbose else 0
-				print(f'\tnext state {next_state}\t')  if verbose else 0
+				# print(f't={t},\tr={round(reward, 5)},\taction={action_idx}\t{sim.action_dict[action_idx]},\ttruncated={truncated},\tdone={terminated},\n\tjust_projected={sim.just_projected}, all_correct={sim.all_correct}, correct_record={sim.correct_record}')  if verbose else 0
+				# print(f'\tnext state {next_state}\t')  if verbose else 0
 			readout = utils.synthetic_readout(sim.assembly_dict, sim.last_active_assembly, sim.head, len(sim.goal), sim.blocks_area)
 			print(f'end of episode (difficulty={difficulty}), num_blocks={sim.num_blocks}, synthetic readout {readout}, goal {sim.goal}, total reward={rtotal}')  if verbose else 0
 			if expert:
@@ -329,9 +343,9 @@ class Test(test_utils.EnvironmentTestMixin, absltest.TestCase):
 			yield self.make_action()
 
 if __name__ == "__main__":
-	# random.seed(1)
-	test_simulator(expert=False, repeat=500, verbose=False)
-	test_simulator(expert=True, repeat=100, verbose=False)
+	random.seed(0)
+	test_simulator(expert=False, repeat=2000, verbose=False)
+	test_simulator(expert=True, repeat=1000, verbose=False)
 	
 	absltest.main()
 
