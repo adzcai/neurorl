@@ -43,7 +43,7 @@ python configs/minigrid_trainer.py \
   --account=kempner_fellows \
   --wandb_entity=wcarvalho92 \
   --wandb_project=minigrid \
-  --search='muzero'
+  --search='baselines'
 
 """
 import functools 
@@ -411,12 +411,11 @@ def sweep(search: str = 'default'):
   if search == 'baselines':
     space = [
         {
-            "group": tune.grid_search(['run-3-babyai-torso']),
-            "agent": tune.grid_search(['muzero']),
+            "group": tune.grid_search(['run-7-loading']),
+            "agent": tune.grid_search(['qlearning']),
             "seed": tune.grid_search([1]),
             "env.level": tune.grid_search([
                 "BabyAI-GoToRedBallNoDists-v0",
-                "BabyAI-GoToObjS6-v1",
             ]),
         }
     ]

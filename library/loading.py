@@ -34,22 +34,6 @@ class LoadOutputs(NamedTuple):
   actor: Any
 
 
-def load_settings(
-  base_dir: str = None,
-  run: str = None,
-  seed_path: str = None):
-  # first load configs
-  if seed_path is None:
-    assert base_dir is not None and run is not None, 'set values for finding path'
-    seed_path = glob(os.path.join(base_dir, run, '*'))[0]
-  env_file = os.path.join(seed_path, 'env_config_kw.pkl')
-  env_kwargs = load_config(env_file)
-
-  config_file = os.path.join(seed_path, 'config.pkl')
-  config_kwargs = load_config(config_file)
-  return seed_path, env_kwargs, config_kwargs
-
-
 def load_agent(
     env,
     config: basics.Config,
@@ -147,35 +131,52 @@ def reload(checkpointer, seed_path, use_latest: bool = True):
   print('loading', ckpt_path)
   status = checkpointer._checkpoint.restore(ckpt_path)
 
-if __name__ == "__main__":
+
+def load_settings(
+  base_dir: str = None,
+  run: str = None,
+  seed_path: str = None):
+  # first load configs
+  if seed_path is None:
+    assert base_dir is not None and run is not None, 'set values for finding path'
+    seed_path = glob(os.path.join(base_dir, run, '*'))[0]
+
+  config_file = os.path.join(seed_path, 'config.pkl')
+  config = load_config(config_file)
+  final_agent_config = config['final_agent_config']
+  final_env_config = config['final_env_config']
+
+  return seed_path, final_env_config, final_agent_config
+
+def main():
     # EXAMPLE: CHANGE AS NEEDED
     default_log_dir = os.environ['RL_RESULTS_DIR']
     base_dir = os.path.join(
       default_log_dir,
-      'usfa_dyna2',
-      'usfa_dyna-60-ind')
+      'baselines',  # search name
+      'run-7-loading'  # group name
+    )
 
-    seed_path, env_kwargs, config_kwargs = load_settings(
+    seed_path, env_kwargs, agent_kwargs = load_settings(
       base_dir=base_dir,
-      run='agen=object_usfa_dyna,task=False,task=False,weig=1.0,sep_=True,disc=0.99,sf_l=[128],unwe=0.0,tile=12,back=False,num_=2,trai=1,test=False,eval=True,term=True')
+      run='agen=qlearning,leve=BabyAI-GoToRedBallNoDists-v0')
 
     from configs.minigrid_trainer import make_environment
     from td_agents import q_learning
     from td_agents import basics
     import functools
 
-    config = q_learning.Config(**env_kwargs)
+    config = q_learning.Config(**agent_kwargs)
     env = make_environment(*env_kwargs)
 
     builder = basics.Builder(
       config=config,
       get_actor_core_fn=functools.partial(
         basics.get_actor_core,
-        linear_epsilon=config.linear_epsilon,
+        evaluation=True,
       ),
       LossFn=q_learning.R2D2LossFn(
         discount=config.discount,
-        
         importance_sampling_exponent=config.importance_sampling_exponent,
         burn_in_length=config.burn_in_length,
         max_replay_size=config.max_replay_size,
@@ -187,7 +188,7 @@ if __name__ == "__main__":
             q_learning.make_minigrid_networks,
             config=config)
 
-    load_agent(
+    load_outputs = load_agent(
       env=env,
       config=config,
       builder=builder,
@@ -195,4 +196,15 @@ if __name__ == "__main__":
       seed_path=seed_path,
       use_latest=True,
       evaluation=True)
-    import ipdb; ipdb.set_trace()
+
+    # can use this to load in latest checkpoints
+    reload(load_outputs.checkpointer, seed_path)
+
+    actor = load_outputs.actor
+    timestep = env.reset()
+    actor.observe_first(timestep)
+    action = actor.select_action(timestep.observation)
+    timestep = env.step(action)
+
+if __name__ == "__main__":
+    main()

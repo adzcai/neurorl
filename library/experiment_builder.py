@@ -85,9 +85,6 @@ def setup_logger_factory(
 ):
   """Builds experiment config."""
 
-  assert log_dir, 'provide directory for logging experiments via FLAGS.folder'
-  paths.process_path(log_dir)
-  utils.save_config(f'{log_dir}/config.pkl', agent_config.__dict__)
   # -----------------------
   # wandb setup
   # -----------------------
@@ -229,7 +226,13 @@ def build_online_experiment_config(
 
   assert log_dir, 'provide directory for logging experiments via FLAGS.folder'
   paths.process_path(log_dir)
-  utils.save_config(f'{log_dir}/config.pkl', agent_config.__dict__)
+  final_agent_config = agent_config.__dict__
+  final_agent_config.pop('tx_pair')
+  to_save_config = dict(
+    final_agent_config=final_agent_config,
+    final_env_config=experiment_config_inputs.final_env_kwargs,
+  )
+  utils.save_config(f'{log_dir}/config.pkl', to_save_config)
 
   save_config_dict = save_config_dict or dict()
   save_config_dict.update(

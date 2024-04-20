@@ -6,7 +6,6 @@ from gymnasium import spaces
 import numpy as np
 import minigrid
 
-from minigrid.utils import baby_ai_bot as bot_lib
 from minigrid.core.constants import COLOR_TO_IDX, OBJECT_TO_IDX, STATE_TO_IDX, IDX_TO_COLOR, IDX_TO_OBJECT
 
 
@@ -29,130 +28,135 @@ def flat_to_matrix(unique_index, num_columns):
     col = unique_index % num_columns
     return int(row), int(col)
 
-class GotoBot(bot_lib.BabyAIBot):
-  """"""
-  def __init__(self, env, loc):
+try:
+  from minigrid.utils import baby_ai_bot as bot_lib
+  class GotoBot(bot_lib.BabyAIBot):
+    """"""
+    def __init__(self, env, loc):
 
-    # Mission to be solved
-    self.mission = mission = env
+      # Mission to be solved
+      self.mission = mission = env
 
-    # Visibility mask. True for explored/seen, false for unexplored.
-    self.vis_mask = np.zeros(shape=(mission.unwrapped.width, mission.unwrapped.height), dtype=bool)
+      # Visibility mask. True for explored/seen, false for unexplored.
+      self.vis_mask = np.zeros(shape=(mission.unwrapped.width, mission.unwrapped.height), dtype=bool)
 
-    # Stack of tasks/subtasks to complete (tuples)
-    # self.subgoals = subgoals = self.mission.task.subgoals()
-    self.loc = loc
-    self.goal = bot_lib.GoNextToSubgoal(self, loc, reason='none')
-    self.stack = [self.goal]
-    self.stack.reverse()
+      # Stack of tasks/subtasks to complete (tuples)
+      # self.subgoals = subgoals = self.mission.task.subgoals()
+      self.loc = loc
+      self.goal = bot_lib.GoNextToSubgoal(self, loc, reason='none')
+      self.stack = [self.goal]
+      self.stack.reverse()
 
-    # How many BFS searches this bot has performed
-    self.bfs_counter = 0
+      # How many BFS searches this bot has performed
+      self.bfs_counter = 0
 
-    # How many steps were made in total in all BFS searches
-    # performed by this bot
-    self.bfs_step_counter = 0
+      # How many steps were made in total in all BFS searches
+      # performed by this bot
+      self.bfs_step_counter = 0
 
-  def generate_trajectory(self, action_taken=None):
+    def generate_trajectory(self, action_taken=None):
 
-    # steps_left = len(self.stack)
-    env = self.mission
+      # steps_left = len(self.stack)
+      env = self.mission
 
-    all_obs = []
-    all_action = []
-    all_reward = []
-    all_truncated = []
-    all_done = []
-    all_info = []
+      all_obs = []
+      all_action = []
+      all_reward = []
+      all_truncated = []
+      all_done = []
+      all_info = []
 
-    def step_update(_action):
-      _obs, _reward, _done, _trunc, _info = env.step(_action)
-      all_obs.append(_obs)
-      all_action.append(_action)
-      all_reward.append(_reward)
-      all_truncated.append(_trunc)
-      all_done.append(_done)
-      all_info.append(_info)
+      def step_update(_action):
+        _obs, _reward, _done, _trunc, _info = env.step(_action)
+        all_obs.append(_obs)
+        all_action.append(_action)
+        all_reward.append(_reward)
+        all_truncated.append(_trunc)
+        all_done.append(_done)
+        all_info.append(_info)
 
-    idx = 0
-    while self.stack:
-      idx += 1
-      if idx > 1000:
-        raise RuntimeError("Taking too long")
+      idx = 0
+      while self.stack:
+        idx += 1
+        if idx > 1000:
+          raise RuntimeError("Taking too long")
 
-      action = self.replan(action_taken)
+        action = self.replan(action_taken)
 
-      # need to do extra step to complete, exit
-      if len(self.stack) > 1:
-         break
-      # -----------------------
-      # done??
-      # -----------------------
-      if action == env.actions.done:
-        break
+        # need to do extra step to complete, exit
+        if len(self.stack) > 1:
+          break
+        # -----------------------
+        # done??
+        # -----------------------
+        if action == env.actions.done:
+          break
 
-      # -----------------------
-      # take actions
-      # -----------------------
-      step_update(action)
-      action_taken = action
+        # -----------------------
+        # take actions
+        # -----------------------
+        step_update(action)
+        action_taken = action
 
-    return (
-      all_action,
-      all_obs,
-      all_reward,
-      all_truncated,
-      all_done,
-      all_info,
-    )
+      return (
+        all_action,
+        all_obs,
+        all_reward,
+        all_truncated,
+        all_done,
+        all_info,
+      )
 
-  def replan(self, action_taken=None):
-    """Replan and suggest an action.
+    def replan(self, action_taken=None):
+      """Replan and suggest an action.
 
-    Call this method once per every iteration of the environment.
+      Call this method once per every iteration of the environment.
 
-    Args:
-        action_taken: The last action that the agent took. Can be `None`, in which
-        case the bot assumes that the action it suggested was taken (or that it is
-        the first iteration).
+      Args:
+          action_taken: The last action that the agent took. Can be `None`, in which
+          case the bot assumes that the action it suggested was taken (or that it is
+          the first iteration).
 
-    Returns:
-        suggested_action: The action that the bot suggests. Can be `done` if the
-        bot thinks that the mission has been accomplished.
+      Returns:
+          suggested_action: The action that the bot suggests. Can be `done` if the
+          bot thinks that the mission has been accomplished.
 
-    """
-    self._process_obs()
+      """
+      self._process_obs()
 
-    # Check that no box has been opened
-    self._check_erroneous_box_opening(action_taken)
+      # Check that no box has been opened
+      self._check_erroneous_box_opening(action_taken)
 
-    # TODO: instead of updating all subgoals, just add a couple
-    # properties to the `Subgoal` class.
-    for subgoal in self.stack:
-        subgoal.update_agent_attributes()
+      # TODO: instead of updating all subgoals, just add a couple
+      # properties to the `Subgoal` class.
+      for subgoal in self.stack:
+          subgoal.update_agent_attributes()
 
-    if self.stack:
-        self.stack[-1].replan_after_action(action_taken)
-    
-    suggested_action = None
-    while self.stack:
-        subgoal = self.stack[-1]
-        suggested_action = subgoal.replan_before_action()
-        # If is not clear what can be done for the current subgoal
-        # (because it is completed, because there is blocker,
-        # or because exploration is required), keep replanning
-        if suggested_action is not None:
-            break
-    if not self.stack:
-        suggested_action = self.mission.unwrapped.actions.done
+      if self.stack:
+          self.stack[-1].replan_after_action(action_taken)
+      
+      suggested_action = None
+      while self.stack:
+          subgoal = self.stack[-1]
+          suggested_action = subgoal.replan_before_action()
+          # If is not clear what can be done for the current subgoal
+          # (because it is completed, because there is blocker,
+          # or because exploration is required), keep replanning
+          if suggested_action is not None:
+              break
+      if not self.stack:
+          suggested_action = self.mission.unwrapped.actions.done
 
-    self._remember_current_state()
+      self._remember_current_state()
 
-    return suggested_action
+      return suggested_action
 
-  def _check_erroneous_box_opening(self, action):
-    # ignore this
-    pass
+    def _check_erroneous_box_opening(self, action):
+      # ignore this
+      pass
+
+except:
+   pass
 
 class GotoOptionsWrapper(Wrapper):
     """

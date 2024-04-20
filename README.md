@@ -20,7 +20,7 @@ echo 'module load cuda/11.8.0-fasrc01  ' > $activation_dir/env_vars.sh
 echo 'module load cudnn/8.9.2.26_cuda11-fasrc01' >> $activation_dir/env_vars.sh
 
 # setting PYTHONPATH added to activation
-echo 'export PYTHONPATH=$PYTHONPATH:.' >> $activation_dir/env_vars.sh
+echo 'export PYTHONPATH=$PYTHONPATH:`pwd`' >> $activation_dir/env_vars.sh
 
 # setting LD_LIBRARY_PATH added to activation
 echo 'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib/' >> $activation_dir/env_vars.sh

@@ -51,10 +51,11 @@ def save_config(filename, config):
         y = y or isinstance(x, int)
         y = y or isinstance(x, bool)
         return y
-      new = {k:v for k,v in config.items() if fits(v)}
-      pickle.dump(new, fp)
-      logging.info(f'Saved: {filename}')
 
+      pickle.dump(config, fp)
+      logging.info(f'Saved: {filename}')
+      from pprint import pprint
+      pprint(config)
 
 def update_config(config, strict: bool = True, **kwargs):
   for k, v in kwargs.items():
