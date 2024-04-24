@@ -349,7 +349,7 @@ class QObserver(basics.ActorObserver):
     return results
   
 
-def make_environment(seed: int ,
+def make_environment(seed: int = 0 ,
                      evaluation: bool = False,
                      **kwargs) -> dm_env.Environment:
   """

@@ -10,11 +10,11 @@ python configs/plan_trainer_muzero.py \
   --parallel='sbatch' \
   --num_actors=1 \
   --use_wandb=True \
-  --partition=gpu_test \
+  --partition=gpu \
   --wandb_entity=yichenli \
   --wandb_project=plan \
   --run_distributed=True \
-  --time=0-12:00:00 
+  --time=0-72:00:00 
 
 // test in interactive session
 python configs/plan_trainer_muzero.py \
@@ -63,8 +63,8 @@ import library.networks as networks
 from envs.blocksworld import plan
 from envs.blocksworld.cfg import configurations 
 
-obsfreq = 500 # frequency to call observer
-plotfreq = 500 # frequency to plot action trajectory
+obsfreq = 5000 # frequency to call observer
+plotfreq = 20000 # frequency to plot action trajectory
 UP_PRESSURE_THRESHOLD = 5 # pressure threshold to increase curriculum
 DOWN_PRESSURE_THRESHOLD = 10 # pressure threshold to decrease curriculum
 UP_REWARD_THRESHOLD = 0.8 # upper reward threshold for incrementing up pressure
@@ -717,7 +717,7 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['muz2~10plan5v8']),
+            "group": tune.grid_search(['muz2~10long5v8']),
             "num_steps": tune.grid_search([500e6]),
 
             "samples_per_insert": tune.grid_search([20.0]),

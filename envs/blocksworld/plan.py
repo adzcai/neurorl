@@ -36,6 +36,7 @@ class Simulator():
 			  reward_decay_factor=cfg['reward_decay_factor'],
 			  action_cost=cfg['action_cost'],
 			  empty_block_unit=cfg['empty_block_unit'],
+			  evaluation=False,
 			  verbose=False):
 		assert cfg['cfg'] == 'plan', f"cfg is {cfg['cfg']}"
 		self.puzzle_max_stacks = puzzle_max_stacks
@@ -49,6 +50,7 @@ class Simulator():
 		self.action_dict = self.create_action_dictionary() 
 		self.num_actions = len(self.action_dict)
 		self.empty_block_unit = empty_block_unit
+		self.evaluation = evaluation
 
 	def close(self):
 		del self.state
@@ -67,8 +69,14 @@ class Simulator():
 																					stack_max_blocks=self.stack_max_blocks,
 																					puzzle_num_blocks=puzzle_num_blocks, 
 																					curriculum=curriculum) 
+		if self.evaluation!=False:
+			self.puzzle_num_blocks, input_stacks, goal_stacks = utils.sample_random_puzzle(puzzle_max_stacks=self.puzzle_max_stacks, 
+																					puzzle_max_blocks=self.puzzle_max_blocks, 
+																					stack_max_blocks=self.stack_max_blocks,
+																					puzzle_num_blocks=self.evaluation, 
+																					curriculum=None) 
 		assert puzzle_num_blocks==None or (puzzle_num_blocks == self.puzzle_num_blocks)
-		# print(f"reset, puzzle_num blocks {self.puzzle_num_blocks}, inputs{input_stacks}, goal{goal_stacks}")
+		print(f"reset, puzzle_num blocks {self.puzzle_num_blocks}, inputs{input_stacks}, goal{goal_stacks}")
 		# format the input and goal to same size: [puzzle_max_stacks, stack_max_blocks]
 		self.goal_stacks = [[-1 for _ in range(self.stack_max_blocks)] for _ in range(self.puzzle_max_stacks)] 
 		for istack in range(len(goal_stacks)): # stack reads from top/highest block to bottom/lowest block, then filled by -1s
