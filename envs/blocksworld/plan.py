@@ -36,7 +36,11 @@ class Simulator():
 			  reward_decay_factor=cfg['reward_decay_factor'],
 			  action_cost=cfg['action_cost'],
 			  empty_block_unit=cfg['empty_block_unit'],
-			  evaluation=False,
+			  evaluation=False, eval_puzzle_num_blocks=None,
+			  compositional=cfg['compositional'], 
+			  compositional_type=cfg['compositional_type'], 
+			  compositional_holdout=cfg['compositional_holdout'],
+			  test_puzzle=None,
 			  verbose=False):
 		assert cfg['cfg'] == 'plan', f"cfg is {cfg['cfg']}"
 		self.puzzle_max_stacks = puzzle_max_stacks
@@ -50,7 +54,12 @@ class Simulator():
 		self.action_dict = self.create_action_dictionary() 
 		self.num_actions = len(self.action_dict)
 		self.empty_block_unit = empty_block_unit
-		self.evaluation = evaluation
+		self.evaluation = evaluation # whether is in evaluation mode
+		self.eval_puzzle_num_blocks = eval_puzzle_num_blocks # eval puzzle lvl
+		self.compositional = compositional # whether is compositional setting
+		self.compositional_type = compositional_type # {None, 'newblock', 'newconfig'}
+		self.compositional_holdout = compositional_holdout # list of block ids to holdout for compositional training
+		self.test_puzzle = test_puzzle
 
 	def close(self):
 		del self.state
@@ -58,23 +67,45 @@ class Simulator():
 		del self.unit_reward
 		del self.action_dict, self.action_to_statechange
 		del self.current_time
+		del self.evaluation, self.eval_puzzle_num_blocks
+		del self.compositional, self.compositional_type, self.compositional_eval, self.compositional_eval
 		return 
 
 	def reset(self, puzzle_num_blocks=None, curriculum=None):
-		import envs.blocksworld.cfg as config
-		curriculum = config.configurations['plan']['curriculum']
 		info = None
-		self.puzzle_num_blocks, input_stacks, goal_stacks = utils.sample_random_puzzle(puzzle_max_stacks=self.puzzle_max_stacks, 
-																					puzzle_max_blocks=self.puzzle_max_blocks, 
-																					stack_max_blocks=self.stack_max_blocks,
-																					puzzle_num_blocks=puzzle_num_blocks, 
-																					curriculum=curriculum) 
-		if self.evaluation!=False:
+		self.puzzle_num_blocks, input_stacks, goal_stacks = None, None, None
+		if self.evaluation: # eval mode
+			if self.test_puzzle!=None: # a predetermined test puzzle is given
+				input_stacks = self.test_puzzle[0]
+				goal_stacks = self.test_puzzle[1]
+				self.puzzle_num_blocks = sum([1 for stack in input_stacks for b in stack])
+			else:
+				assert self.eval_puzzle_num_blocks!=None, f"eval_puzzle_num_blocks {self.eval_puzzle_num_blocks} should be given in evaluation mode"
+				self.puzzle_num_blocks, input_stacks, goal_stacks = utils.sample_random_puzzle(puzzle_max_stacks=self.puzzle_max_stacks, 
+																						puzzle_max_blocks=self.puzzle_max_blocks, 
+																						stack_max_blocks=self.stack_max_blocks,
+																						puzzle_num_blocks=self.eval_puzzle_num_blocks, 
+																						curriculum=None, leak=False,
+																						compositional=self.compositional, 
+																						compositional_type=self.compositional_type,
+																						compositional_eval=self.compositional,
+																						compositional_holdout=self.compositional_holdout,
+																						) 
+		else: # training mode
+			if curriculum==None:
+				import envs.blocksworld.cfg as config
+				curriculum = config.configurations['plan']['curriculum']
+				leak = config.configurations['plan']['leak']
 			self.puzzle_num_blocks, input_stacks, goal_stacks = utils.sample_random_puzzle(puzzle_max_stacks=self.puzzle_max_stacks, 
 																					puzzle_max_blocks=self.puzzle_max_blocks, 
 																					stack_max_blocks=self.stack_max_blocks,
-																					puzzle_num_blocks=self.evaluation, 
-																					curriculum=None) 
+																					puzzle_num_blocks=self.eval_puzzle_num_blocks, 
+																					curriculum=curriculum, leak=leak,
+																					compositional=self.compositional, 
+																					compositional_type=self.compositional_type,
+																					compositional_eval=False,
+																					compositional_holdout=self.compositional_holdout,
+																					) 
 		assert puzzle_num_blocks==None or (puzzle_num_blocks == self.puzzle_num_blocks)
 		print(f"reset, puzzle_num blocks {self.puzzle_num_blocks}, inputs{input_stacks}, goal{goal_stacks}")
 		# format the input and goal to same size: [puzzle_max_stacks, stack_max_blocks]

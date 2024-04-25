@@ -63,8 +63,8 @@ import library.networks as networks
 from envs.blocksworld import parse
 from envs.blocksworld.cfg import configurations 
 
-obsfreq = 2000 # frequency to call observer
-plotfreq = 2000 # frequency to plot action trajectory
+obsfreq = 5000 # frequency to call observer
+plotfreq = 20000 # frequency to plot action trajectory
 UP_PRESSURE_THRESHOLD = 5 # pressure threshold to increase curriculum
 DOWN_PRESSURE_THRESHOLD = 10 # pressure threshold to decrease curriculum
 UP_REWARD_THRESHOLD = 0.9 # upper reward threshold for incrementing up pressure

@@ -76,7 +76,7 @@ ENGLISH_READOUT_RULES = {
 
 
 def init_simulator_areas():
-	return AREAS, LEX, DET, FIBERS
+	return AREAS, LEX, DET, VERB, FIBERS
 
 def get_action_idx(atuple, action_dict):
 	(aname, arg1, arg2) = atuple
@@ -116,10 +116,10 @@ def parse_noun(action_dict):
 				[("project_star", None, None),],
 
 				[
-				#("inhibit_area", DET, None),
-				# ("inhibit_area", ADJ, None),
-				# ("inhibit_area", PREP_P, None),
-				# ("inhibit_area", PREP, None),
+				("inhibit_area", DET, None), #
+				("inhibit_area", ADJ, None), #
+				("inhibit_area", PREP_P, None), #
+				("inhibit_area", PREP, None), #
 				("inhibit_fiber", LEX, SUBJ),
 				("inhibit_fiber", LEX, OBJ),
 				("inhibit_fiber", LEX, PREP_P),
@@ -152,16 +152,16 @@ def parse_transverb(action_dict):
 				("disinhibit_fiber", LEX, VERB),
 				("disinhibit_fiber", VERB, SUBJ),
 				("disinhibit_fiber", VERB, ADVERB),
-				# ("disinhibit_area", ADVERB, None),
+				("disinhibit_area", ADVERB, None), #
 				],
 
 				[("project_star", None, None),],
 
 				[
 				("inhibit_fiber", LEX, VERB),
-				# ("disinhibit_area", OBJ, None),
-				# ("inhibit_area", SUBJ, None),
-				# ("inhibit_area", ADVERB, None),
+				("disinhibit_area", OBJ, None), #
+				("inhibit_area", SUBJ, None), #
+				("inhibit_area", ADVERB, None), #
 				("disinhibit_fiber", PREP_P, VERB),
 				],
 				]
@@ -173,15 +173,15 @@ def parse_intransverb(action_dict):
 				("disinhibit_fiber", LEX, VERB),
 				("disinhibit_fiber", VERB, SUBJ),
 				("disinhibit_fiber", VERB, ADVERB),
-				# ("disinhibit_area", ADVERB, None),
+				("disinhibit_area", ADVERB, None), #
 				],
 
 				[("project_star", None, None),],
 
 				[
 				("inhibit_fiber", LEX, VERB),
-				# ("inhibit_area", SUBJ, None),
-				# ("inhibit_area", ADVERB, None),
+				("inhibit_area", SUBJ, None), #
+				("inhibit_area", ADVERB, None), #
 				("disinhibit_fiber", PREP_P, VERB),
 				],
 				]
@@ -199,8 +199,8 @@ def parse_copula(action_dict):
 				[
 				("inhibit_fiber", LEX, VERB),
 				("disinhibit_fiber", ADJ, VERB),
-				# ("disinhibit_area", OBJ, None),
-				# ("inhibit_area", SUBJ, None),
+				("disinhibit_area", OBJ, None), #
+				("inhibit_area", SUBJ, None), #
 				],
 				]
 	return get_action_idxs(action_tuples, action_dict)
@@ -208,7 +208,7 @@ def parse_copula(action_dict):
 def parse_adverb(action_dict):
 	action_tuples = [
 				[
-				# ("disinhibit_area", ADVERB, None),
+				("disinhibit_area", ADVERB, None), #
 				("disinhibit_fiber", LEX, ADVERB),
 				],
 
@@ -216,7 +216,7 @@ def parse_adverb(action_dict):
 
 				[
 				("inhibit_fiber", LEX, ADVERB),
-				# ("inhibit_area", ADVERB, None),
+				("inhibit_area", ADVERB, None), #
 				],
 				]
 	return get_action_idxs(action_tuples, action_dict)
@@ -224,7 +224,7 @@ def parse_adverb(action_dict):
 def parse_det(action_dict):
 	action_tuples = [
 				[
-				# ("disinhibit_area", DET, None),
+				("disinhibit_area", DET, None), #
 				("disinhibit_fiber", LEX, DET),
 				],
 
@@ -240,7 +240,7 @@ def parse_det(action_dict):
 def parse_adj(action_dict):
 	action_tuples = [
 				[
-				# ("disinhibit_area", ADJ, None),
+				("disinhibit_area", ADJ, None), #
 				("disinhibit_fiber", LEX, ADJ),
 				],
 
@@ -257,7 +257,7 @@ def parse_prep(action_dict):
 	action_tuples = [
 				[
 				("disinhibit_fiber", LEX, PREP),
-				# ("disinhibit_area", PREP, None),
+				("disinhibit_area", PREP, None), #
 				],
 
 				[("project_star", None, None),],
@@ -270,7 +270,7 @@ def parse_prep(action_dict):
 				("inhibit_fiber", DET, OBJ),
 				("inhibit_fiber", ADJ, SUBJ),
 				("inhibit_fiber", ADJ, OBJ),
-				# ("disinhibit_area", PREP, None),
+				("disinhibit_area", PREP, None), #
 				],
 				]
 	return get_action_idxs(action_tuples, action_dict)
@@ -492,7 +492,7 @@ def expert_demo_language(simulator):
 		curwid = wid
 	return final_actions
 
-def synthetic_project(simulator, max_project_round=1, verbose=True):
+def synthetic_project(simulator, max_project_round=5, verbose=True):
 	'''
 	Strong project with symbolic assemblies.
 	'''
@@ -517,14 +517,16 @@ def synthetic_project(simulator, max_project_round=1, verbose=True):
 		for idx in simulator.stateidx_to_fibername.keys(): # get opened fibers from state vector
 			if state[idx]==1: # fiber is open
 				area1, area2 = simulator.stateidx_to_fibername[idx] # get areas on both ends
-				if area1 != lexicon_area: # skip if this is lex area
+				area1opened = state[simulator.area_to_stateidx[area1]['opened']]==1
+				area2opened = state[simulator.area_to_stateidx[area2]['opened']]==1
+				if area1 != lexicon_area and area1opened: # skip if this is lex area
 					opened_areas = set([area1]).union(opened_areas)
-				if area2 != lexicon_area:
+				if area2 != lexicon_area and area2opened:
 					opened_areas = set([area2]).union(opened_areas)
 				# check eligibility of areas, can only be source if there exists last active assembly in the area
-				if (prev_last_active_assembly[area1] != -1) and (area2 != lexicon_area): # lex area cannot receive
+				if (area1opened and area2opened) and (prev_last_active_assembly[area1] != -1) and (area2 != lexicon_area): # lex area cannot receive
 					receive_from[area2] = set([area1]).union(receive_from.get(area2, set())) # area1 as source, to destination area2
-				if (prev_last_active_assembly[area2] != -1) and (area1 != lexicon_area): # bidirectional, area2 can also be source
+				if (area1opened and area2opened) and (prev_last_active_assembly[area2] != -1) and (area1 != lexicon_area): # bidirectional, area2 can also be source
 					receive_from[area1] = set([area2]).union(receive_from.get(area1, set())) # area2 source, area1 destination
 		print(f'prev_assembly_dict: {prev_assembly_dict},\nprev_last_active_assembly: {prev_last_active_assembly},\nopened_areas: {opened_areas},\nreceive_from: {receive_from}') if verbose else 0
 		# Do project

@@ -952,7 +952,9 @@ def expert_demo_plan(simulator):
 
 
 def sample_random_puzzle(puzzle_max_stacks, puzzle_max_blocks, stack_max_blocks,
-						  puzzle_num_blocks=None, curriculum=None):
+						puzzle_num_blocks, 
+						curriculum, leak,
+						compositional, compositional_type, compositional_eval, compositional_holdout):
 	'''
 	Create a random puzzle for blocksworld planning task.
 	Input
@@ -984,17 +986,28 @@ def sample_random_puzzle(puzzle_max_stacks, puzzle_max_blocks, stack_max_blocks,
 			else:
 				population = list(range(2, puzzle_max_blocks+1)) # possible number of blocks in puzzle
 				weights = np.zeros_like(population, dtype=np.float32)
-				# weights[curriculum-2] += 0.7 # weight for current level
-				# weights[max(curriculum-3, 0)] += 0.15 # weight for the prev level
-				# weights[: max(curriculum-3, 1)] += 0.15 / max(curriculum-3, 1) # weight for easier levels. harder levels are 0
-				weights[curriculum-2] += 0.6 # weight for current level
-				weights[max(curriculum-3, 0)] += 0.15 # weight for the prev level
-				weights[: max(curriculum-3, 1)] += 0.15 / max(curriculum-3, 1) # easier levels
-				weights[min(curriculum-1, len(population)-1):] += 0.1 / (len(population)-min(curriculum-1,len(population)-1)) # harder levels
+				if (not leak) or (compositional and compositional_type=='newblock'):
+					weights[curriculum-2] += 0.7 # weight for current level
+					weights[max(curriculum-3, 0)] += 0.15 # weight for the prev level
+					weights[: max(curriculum-3, 1)] += 0.15 / max(curriculum-3, 1) # weight for easier levels. harder levels are 0
+				else: # spoil harder levels beyond the current curriculum
+					weights[curriculum-2] += 0.6 # weight for current level
+					weights[max(curriculum-3, 0)] += 0.15 # weight for the prev level
+					weights[: max(curriculum-3, 1)] += 0.15 / max(curriculum-3, 1) # easier levels
+					weights[min(curriculum-1, len(population)-1):] += 0.1 / (len(population)-min(curriculum-1,len(population)-1)) # harder levels
 				assert np.isclose(np.sum(weights), 1), f"weights {weights} should sum to 1, but have {np.sum(weights)}"
 				puzzle_num_blocks = random.choices(population=population, weights=weights, k=1)[0]
-		# input stacks
+		# sample input stacks
 		available_blocks = list(range(puzzle_num_blocks)) # pool of all block ids for this puzzle
+		if compositional and compositional_type=='newblock': # holdout a set of block ids
+			if compositional_eval: # eval mode
+				assert puzzle_num_blocks<=len(compositional_holdout), \
+					f"compositional holdout {compositional_holdout} contains fewer elements than required by a puzzle ({puzzle_num_blocks})"
+				available_blocks = random.sample(compositional_holdout, k=puzzle_num_blocks)
+			else: # training mode
+				available_blocks = list(set(range(puzzle_max_blocks)) - set(compositional_holdout))[:puzzle_num_blocks]
+				assert len(available_blocks)>=puzzle_num_blocks, \
+					f"compositional training {available_blocks} contains fewer elements than required by a puzzle ({puzzle_num_blocks})"
 		input_stacks = []
 		for _ in range(puzzle_max_stacks):
 			if len(available_blocks)==0:
@@ -1022,8 +1035,17 @@ def sample_random_puzzle(puzzle_max_stacks, puzzle_max_blocks, stack_max_blocks,
 				istack += 1 # go to next input stack
 				if len(available_blocks)==0:
 					break # no more remaining blocks available, done
-		# goal stacks
+		# sample goal stacks
 		available_blocks = list(range(puzzle_num_blocks))
+		if compositional and compositional_type=='newblock': # holdout a set of block ids
+			if compositional_eval: # eval mode
+				assert puzzle_num_blocks<=len(compositional_holdout), \
+					f"compositional holdout {compositional_holdout} contains fewer elements than required by a puzzle ({puzzle_num_blocks})"
+				available_blocks = random.sample(compositional_holdout, k=puzzle_num_blocks)
+			else: # training mode
+				available_blocks = list(set(range(puzzle_max_blocks)) - set(compositional_holdout))[:puzzle_num_blocks]
+				assert len(available_blocks)>=puzzle_num_blocks, \
+					f"compositional training {available_blocks} contains fewer elements than required by a puzzle ({puzzle_num_blocks})"
 		goal_stacks = []
 		for _ in range(puzzle_max_stacks):
 			if len(available_blocks)==0:

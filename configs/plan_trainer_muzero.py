@@ -717,7 +717,7 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['muz2~10long5v8']),
+            "group": tune.grid_search(['M2~10comp5v8max1-7-7']),
             "num_steps": tune.grid_search([500e6]),
 
             "samples_per_insert": tune.grid_search([20.0]),

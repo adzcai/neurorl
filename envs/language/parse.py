@@ -33,7 +33,7 @@ class Simulator():
 				area_status = configurations['area_status'],
 				max_complexity = configurations['max_complexity'],
 				verbose=False):
-		self.all_areas, self.lexicon_area, self.det_area, self.all_fibers = utils.init_simulator_areas()
+		self.all_areas, self.lexicon_area, self.det_area, self.verb_area, self.all_fibers = utils.init_simulator_areas()
 		self.max_lexicon = max_lexicon
 		self.max_steps = max_steps # max steps allowed in episode
 		self.max_input_length = max_input_length # max num of words in sentence
@@ -104,9 +104,13 @@ class Simulator():
 		truncated = False # end due to max steps
 		info = None
 		if (action_name == "disinhibit_fiber") or (action_name == "inhibit_fiber"):
-			area1, area2 = action_tuple[1], action_tuple[2]
 			if self.state[state_change_tuple[0]] == state_change_tuple[1]: 
 				reward -= self.action_cost # BAD, fiber is already disinhibited/inhibited
+			self.state[state_change_tuple[0]] = state_change_tuple[1] # update state
+			self.just_projected = False
+		elif (action_name == "disinhibit_area") or (action_name == "inhibit_area"):
+			if self.state[state_change_tuple[0]] == state_change_tuple[1]: 
+				reward -= self.action_cost # BAD, area is already disinhibited/inhibited
 			self.state[state_change_tuple[0]] = state_change_tuple[1] # update state
 			self.just_projected = False
 		elif action_name == "project_star": # state_change_tuple = ([],[]) 
@@ -258,20 +262,24 @@ class Simulator():
 		for area in self.all_areas:
 			last_active_assembly[area] = -1 # initialize area with no activated assembly
 			assembly_dict[area] = [] # will become {area: [a_id 0[source a_name[A1, A2], source a_id [a1, a2]], 1[[A3], [a3]], 2[(A4, a4)], ...]}
-		# # encode area inhibition status
-		# for area in self.all_areas:
-		# 	if area==self.lexicon_area:
-		# 		continue
-		# 	state_vec.append(0) # area locked initially
-		# 	assert self.action_dict[action_idx][0]=="disinhibit_area" and self.action_dict[action_idx][1]==area, \
-		# 				f"action_index {action_idx} should have (disinhibit_area, {area}, None), but action_dict has {self.action_dict}"
-		# 	action_to_statechange[action_idx] = ([state_vector_idx], 1) # open area
-		# 	action_idx += 1	
-		# 	assert self.action_dict[action_idx][0]=="inhibit_area" and self.action_dict[action_idx][1]==area, \
-		# 				f"action_index {action_idx} should have (inhibit_area, {area}, None), but action_dict has {self.action_dict}"
-		# 	action_to_statechange[action_idx] = ([state_vector_idx], 0) # close area
-		# 	action_idx += 1
-		# 	state_vector_idx += 1
+		# encode area inhibition status
+		for area in self.all_areas:
+			if area==self.lexicon_area or area==self.verb_area:
+				state_vec.append(1) # these two areas are always opened
+				area_to_stateidx[area] = {'opened': state_vector_idx} # area -> state idx
+				state_vector_idx += 1
+				continue
+			state_vec.append(0) # area locked initially
+			area_to_stateidx[area] = {'opened': state_vector_idx} # area -> state idx
+			assert self.action_dict[action_idx][0]=="disinhibit_area" and self.action_dict[action_idx][1]==area, \
+						f"action_index {action_idx} should have (disinhibit_area, {area}, None), but action_dict has {self.action_dict}"
+			action_to_statechange[action_idx] = ([state_vector_idx], 1) # open area
+			action_idx += 1	
+			assert self.action_dict[action_idx][0]=="inhibit_area" and self.action_dict[action_idx][1]==area, \
+						f"action_index {action_idx} should have (inhibit_area, {area}, None), but action_dict has {self.action_dict}"
+			action_to_statechange[action_idx] = ([state_vector_idx], 0) # close area
+			action_idx += 1
+			state_vector_idx += 1
 		# action -> state change: strong project (i.e. project star)
 		assert self.action_dict[action_idx][0]=="project_star", \
 			f"action_index {action_idx} should have (project_star, None), but action_dict has {self.action_dict}"
@@ -339,13 +347,13 @@ class Simulator():
 			idx += 1
 			dictionary[idx] = ("inhibit_fiber", area1, area2)
 			idx += 1
-		# for area in self.all_areas:
-		# 	if area == self.lexicon_area:
-		# 		continue
-		# 	dictionary[idx] = ("disinhibit_area", area, None)
-		# 	idx += 1
-		# 	dictionary[idx] = ("inhibit_area", area, None)
-		# 	idx += 1
+		for area in self.all_areas:
+			if area==self.lexicon_area or area==self.verb_area:
+				continue
+			dictionary[idx] = ("disinhibit_area", area, None)
+			idx += 1
+			dictionary[idx] = ("inhibit_area", area, None)
+			idx += 1
 		# project star
 		dictionary[idx] = ("project_star", None, None)
 		idx += 1
@@ -398,6 +406,14 @@ def test_simulator(expert=True, repeat=1, verbose=False):
 
 
 
+
+'''
+salloc -p test -t 0-01:00 --mem=200000 
+
+salloc -p gpu_test -t 0-01:00 --mem=8000 --gres=gpu:1
+module load python/3.10.12-fasrc01
+mamba activate neurorl
+'''
 
 if __name__ == "__main__":
 
