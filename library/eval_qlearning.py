@@ -167,7 +167,9 @@ def make_test_environment(puzzle_num_blocks: int,
 
 def main(lvls, compositional, compositional_type, compositional_holdout,
         groupname, searchname='initial', 
-        nrepeats=100):
+        nrepeats=100, 
+        eval_test_puzzles=False,
+        eval_num_stacks=False, fixed_num_blocks=None):
     default_log_dir = os.environ['RL_RESULTS_DIR']
     base_dir = os.path.join(
       default_log_dir,
@@ -183,13 +185,31 @@ def main(lvls, compositional, compositional_type, compositional_holdout,
     import functools
     import envs.blocksworld.utils as bwutils
     config = q_learning.Config(**agent_kwargs)
-    action_dict = bwcfg.configurations['plan']['action_dict']
-
+    
+    qlsolved = []
+    qlsolvedsem = []
+    expertsolved = []
+    expertsolvedsem = []
+    randomsolved = []
+    randomsolvedsem = []
+    qlreward = []
+    qlrewardsem = []
+    expertreward = []
+    expertrewardsem = []
+    randomreward = []
+    randomrewardsem = []
+    qlsteps = [] # num of steps for solving a puzzle 
+    qlstepssem = []
+    expertsteps = [] # num of steps for solving a puzzle
+    expertstepssem = []
+    randomsteps = [] # num of steps for solving a puzzle
+    randomstepssem = []
     for lvl in lvls:
       env, sim = make_test_environment(puzzle_num_blocks=lvl, 
                               compositional=compositional, 
                                 compositional_type=compositional_type, compositional_holdout=compositional_holdout,
                               test_puzzle=None)
+      action_dict = bwcfg.configurations['plan']['action_dict']
       builder = basics.Builder(
         config=config,
         ActorCls=functools.partial(
@@ -221,10 +241,113 @@ def main(lvls, compositional, compositional_type, compositional_holdout,
 
       print(f"\n----------------------- Evaluating lvl {lvl}")
       print(f"Qlearning {groupname}")
+      lvlsteps = [] # num steps for successful puzzles
       lvlsolved = []
       lvlepsr = []
       for irepeat in range(nrepeats):
         # print(f"irepeat {irepeat}")
+        reload(load_outputs.checkpointer, seed_path)
+        actor = load_outputs.actor
+        timestep = env.reset()
+        actor.observe_first(timestep)
+        ends = False
+        t = 0
+        epsr = 0
+        while not ends:
+          action = actor.select_action(timestep.observation)
+          timestep = env.step(action)
+          steptype = timestep.step_type
+          r = timestep.reward
+          state = timestep.observation[0]
+          t += 1 # increment time step
+          epsr += r # episode cumulative reward
+          if steptype==2: # if final timestep
+            ends = True
+            if (t<bwcfg.configurations['plan']['max_steps']-1) or (epsr>0.85):
+              lvlsolved.append(1) # terminates early or at max step
+              lvlsteps.append(t)
+            else:
+              lvlsolved.append(0)
+          # print(f"\tt={t}, action_name: {action_dict[int(action)]}, r={round(float(r),5)}, ends={ends}")
+        lvlepsr.append(epsr)
+      if len(lvlsteps)==0:
+        lvlsteps=[np.nan]
+      print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
+              \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})\
+              \n\tavg steps {round(np.mean(lvlsteps), 6)} (sem={round(sem(lvlsteps), 6)})")
+      qlsolved.append(round(np.mean(lvlsolved),6))
+      qlsolvedsem.append(round(sem(lvlsolved),6))
+      qlreward.append(round(np.mean(lvlepsr),6))
+      qlrewardsem.append(round(sem(lvlepsr),6))
+      qlsteps.append(round(np.nanmean(lvlsteps), 6))
+      qlstepssem.append(round(sem(lvlsteps, nan_policy="omit"), 6))
+
+      print(f"Expert")
+      lvlsolved = []
+      lvlepsr = []
+      for irepeat in range(nrepeats):
+        state, _ = sim.reset()
+        epsr = 0
+        expert_demo = bwutils.expert_demo_plan(sim)
+        for t, a in enumerate(expert_demo):
+          state, r, terminated, truncated, _ = sim.step(a)
+          epsr += r # episode cumulative reward
+        lvlepsr.append(epsr)
+        lvlsolved.append(1)
+      print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
+              \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})")
+      expertsolved.append(round(np.mean(lvlsolved),6))
+      expertsolvedsem.append(round(sem(lvlsolved),6))
+      expertreward.append(round(np.mean(lvlepsr),6))
+      expertrewardsem.append(round(sem(lvlepsr),6))
+
+      print(f"Random")
+      lvlsolved = []
+      lvlepsr = []
+      for irepeat in range(nrepeats):
+        state, _ = sim.reset()
+        epsr = 0
+        ends = False
+        while not ends:
+          a = random.choice(range(sim.num_actions))
+          state, r, terminated, truncated, _ = sim.step(a)
+          epsr += r # episode cumulative reward
+          if terminated:
+            ends = True
+            lvlsolved.append(1)
+          elif truncated:
+            ends=True
+            lvlsolved.append(0)
+        lvlepsr.append(epsr)
+      print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
+              \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})")
+      randomsolved.append(round(np.mean(lvlsolved),6))
+      randomsolvedsem.append(round(sem(lvlsolved),6))
+      randomreward.append(round(np.mean(lvlepsr),6))
+      randomrewardsem.append(round(sem(lvlepsr),6))
+
+    print(f"qlsolved={qlsolved}\nqlsolvedsem={qlsolvedsem}\
+            \nqlsteps={qlsteps}\nqlstepssem={qlstepssem}")
+
+    if eval_test_puzzles:
+      print(f"\n----------------------- Evaluating test_puzzles")
+      print(f"Qlearning {groupname}")
+      from envs.blocksworld.test_puzzles import test_puzzles
+      lvlsolved = []
+      lvlepsr = []
+      for puzzle in test_puzzles:
+        env, sim = make_test_environment(puzzle_num_blocks=None, 
+                                        compositional=False, 
+                                          compositional_type=None, compositional_holdout=None,
+                                        test_puzzle=puzzle)
+        load_outputs = load_agent(
+                                env=env,
+                                config=config,
+                                builder=builder,
+                                network_factory=network_factory,
+                                seed_path=seed_path,
+                                use_latest=True,
+                                evaluation=True)
         reload(load_outputs.checkpointer, seed_path)
         actor = load_outputs.actor
         timestep = env.reset()
@@ -254,129 +377,247 @@ def main(lvls, compositional, compositional_type, compositional_holdout,
       print(f"Expert")
       lvlsolved = []
       lvlepsr = []
-      for irepeat in range(nrepeats):
-        state, _ = sim.reset()
-        epsr = 0
-        expert_demo = bwutils.expert_demo_plan(sim)
-        for t, a in enumerate(expert_demo):
-          state, r, terminated, truncated, _ = sim.step(a)
-          epsr += r # episode cumulative reward
-        lvlepsr.append(epsr)
-        lvlsolved.append(1)
+      for puzzle in test_puzzles:
+        env, sim = make_test_environment(puzzle_num_blocks=None, 
+                                        compositional=False, 
+                                          compositional_type=None, compositional_holdout=None,
+                                        test_puzzle=puzzle)
+        for irepeat in range(nrepeats):
+          state, _ = sim.reset()
+          epsr = 0
+          expert_demo = bwutils.expert_demo_plan(sim)
+          for t, a in enumerate(expert_demo):
+            state, r, terminated, truncated, _ = sim.step(a)
+            epsr += r # episode cumulative reward
+          lvlepsr.append(epsr)
+          lvlsolved.append(1)
       print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
               \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})")
 
       print(f"Random")
       lvlsolved = []
       lvlepsr = []
-      for irepeat in range(nrepeats):
-        state, _ = sim.reset()
-        epsr = 0
-        ends = False
-        while not ends:
-          a = random.choice(range(sim.num_actions))
-          state, r, terminated, truncated, _ = sim.step(a)
-          epsr += r # episode cumulative reward
-          if terminated:
-            ends = True
-            lvlsolved.append(1)
-          elif truncated:
-            ends=True
-            lvlsolved.append(0)
-        lvlepsr.append(epsr)
+      for puzzle in test_puzzles:
+        env, sim = make_test_environment(puzzle_num_blocks=None, 
+                                        compositional=False, 
+                                          compositional_type=None, compositional_holdout=None,
+                                        test_puzzle=puzzle)
+        for irepeat in range(nrepeats):
+          state, _ = sim.reset()
+          epsr = 0
+          ends = False
+          while not ends:
+            a = random.choice(range(sim.num_actions))
+            state, r, terminated, truncated, _ = sim.step(a)
+            epsr += r # episode cumulative reward
+            if terminated:
+              ends = True
+              lvlsolved.append(1)
+            elif truncated:
+              ends=True
+              lvlsolved.append(0)
+          lvlepsr.append(epsr)
       print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
               \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})")
 
 
-    print(f"\n----------------------- Evaluating test_puzzles")
-    print(f"Qlearning {groupname}")
-    from envs.blocksworld.test_puzzles import test_puzzles
-    lvlsolved = []
-    lvlepsr = []
-    for puzzle in test_puzzles:
-      env, sim = make_test_environment(puzzle_num_blocks=None, 
-                                      compositional=False, 
-                                        compositional_type=None, compositional_holdout=None,
-                                      test_puzzle=puzzle)
-      load_outputs = load_agent(
-                              env=env,
-                              config=config,
-                              builder=builder,
-                              network_factory=network_factory,
-                              seed_path=seed_path,
-                              use_latest=True,
-                              evaluation=True)
-      reload(load_outputs.checkpointer, seed_path)
-      actor = load_outputs.actor
-      timestep = env.reset()
-      actor.observe_first(timestep)
-      ends = False
-      t = 0
-      epsr = 0
-      while not ends:
-        action = actor.select_action(timestep.observation)
-        timestep = env.step(action)
-        steptype = timestep.step_type
-        r = timestep.reward
-        state = timestep.observation[0]
-        t += 1 # increment time step
-        epsr += r # episode cumulative reward
-        if steptype==2: # if final timestep
-          ends = True
-          if (t<bwcfg.configurations['plan']['max_steps']-1) or (epsr>0.85):
-            lvlsolved.append(1) # terminates early or at max step
-          else:
-            lvlsolved.append(0)
-        # print(f"\tt={t}, action_name: {action_dict[int(action)]}, r={round(float(r),5)}, ends={ends}")
-      lvlepsr.append(epsr)
-    print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
-            \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})")
 
-    print(f"Expert")
-    lvlsolved = []
-    lvlepsr = []
-    for puzzle in test_puzzles:
-      env, sim = make_test_environment(puzzle_num_blocks=None, 
-                                      compositional=False, 
-                                        compositional_type=None, compositional_holdout=None,
-                                      test_puzzle=puzzle)
-      for irepeat in range(nrepeats):
-        state, _ = sim.reset()
-        epsr = 0
-        expert_demo = bwutils.expert_demo_plan(sim)
-        for t, a in enumerate(expert_demo):
-          state, r, terminated, truncated, _ = sim.step(a)
-          epsr += r # episode cumulative reward
-        lvlepsr.append(epsr)
-        lvlsolved.append(1)
-    print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
-            \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})")
+    if eval_num_stacks and fixed_num_blocks!=None:
+      qlsolved = [] # ratio of puzzles solved
+      qlsolvedsem = [] 
+      expertsolved = []
+      expertsolvedsem = []
+      randomsolved = []
+      randomsolvedsem = []
+      qlreward = [] # avg episode reward
+      qlrewardsem = []
+      expertreward = []
+      expertrewardsem = []
+      randomreward = []
+      randomrewardsem = []
+      qlsteps = [] # num of steps for solving a puzzle 
+      qlstepssem = []
+      expertsteps = [] # num of steps for solving a puzzle
+      expertstepssem = []
+      randomsteps = [] # num of steps for solving a puzzle
+      randomstepssem = []
 
-    print(f"Random")
-    lvlsolved = []
-    lvlepsr = []
-    for puzzle in test_puzzles:
-      env, sim = make_test_environment(puzzle_num_blocks=None, 
-                                      compositional=False, 
-                                        compositional_type=None, compositional_holdout=None,
-                                      test_puzzle=puzzle)
-      for irepeat in range(nrepeats):
-        state, _ = sim.reset()
-        epsr = 0
-        ends = False
-        while not ends:
-          a = random.choice(range(sim.num_actions))
-          state, r, terminated, truncated, _ = sim.step(a)
-          epsr += r # episode cumulative reward
-          if terminated:
-            ends = True
-            lvlsolved.append(1)
-          elif truncated:
-            ends=True
-            lvlsolved.append(0)
-        lvlepsr.append(epsr)
-    print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
-            \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})")
+      for nstacks in range(2, fixed_num_blocks+1):
+        puzzles = [] # puzzles for this num of stacks
+        while len(puzzles)<nrepeats: 
+          nb, input_stacks, goal_stacks = bwutils.sample_random_puzzle(puzzle_max_stacks=nstacks, 
+                                                              puzzle_max_blocks=bwcfg.configurations['puzzle_max_blocks'], 
+                                                              stack_max_blocks=bwcfg.configurations['stack_max_blocks'],
+                                                              puzzle_num_blocks=fixed_num_blocks, 
+                                                              curriculum=False, leak=False,
+                                                              compositional=compositional, 
+                                                                compositional_type=compositional_type, 
+                                                                compositional_eval=compositional, 
+                                                                compositional_holdout=compositional_holdout)
+          assert nb == fixed_num_blocks
+          if len(input_stacks)==nstacks or len(goal_stacks)==nstacks:
+            puzzles.append([input_stacks, goal_stacks])
+
+        env, sim = make_test_environment(puzzle_num_blocks=fixed_num_blocks, 
+                                compositional=compositional, 
+                                  compositional_type=compositional_type, compositional_holdout=compositional_holdout,
+                                test_puzzle=puzzles[0])
+        action_dict = bwcfg.configurations['plan']['action_dict']
+
+        builder = basics.Builder(
+          config=config,
+          ActorCls=functools.partial(
+            basics.BasicActor,
+            observers=[QObserver(period=100000)],
+            ),
+          get_actor_core_fn=functools.partial(
+            basics.get_actor_core,
+            evaluation=True,
+          ),
+          LossFn=q_learning.R2D2LossFn(
+            discount=config.discount,
+            importance_sampling_exponent=config.importance_sampling_exponent,
+            burn_in_length=config.burn_in_length,
+            max_replay_size=config.max_replay_size,
+            max_priority_weight=config.max_priority_weight,
+            bootstrap_n=config.bootstrap_n,
+          ))
+        network_factory = functools.partial(make_qlearning_networks, config=config)
+        load_outputs = load_agent(
+                                env=env,
+                                config=config,
+                                builder=builder,
+                                network_factory=network_factory,
+                                seed_path=seed_path,
+                                use_latest=True,
+                                evaluation=True)
+        reload(load_outputs.checkpointer, seed_path)     # can use this to load in latest checkpoints
+
+        print(f"\n----------------------- Evaluating on {nstacks} stacks ({fixed_num_blocks} blocks)")
+        print(f"Qlearning {groupname}")
+        lvlsteps = [] # num steps for successful puzzles
+        lvlepsr = [] # episode reward
+        lvlsolved = [] # whether the puzzle is solved
+        for irepeat, puzzle in zip(range(nrepeats), puzzles):
+          # print(f"irepeat {irepeat}")
+          env, sim = make_test_environment(puzzle_num_blocks=fixed_num_blocks, 
+                                compositional=compositional, 
+                                  compositional_type=compositional_type, compositional_holdout=compositional_holdout,
+                                test_puzzle=puzzle)
+          load_outputs = load_agent(
+                                  env=env,
+                                  config=config,
+                                  builder=builder,
+                                  network_factory=network_factory,
+                                  seed_path=seed_path,
+                                  use_latest=True,
+                                  evaluation=True)
+          reload(load_outputs.checkpointer, seed_path)
+          actor = load_outputs.actor
+          timestep = env.reset()
+          actor.observe_first(timestep)
+          ends = False
+          t = 0
+          epsr = 0
+          while not ends:
+            action = actor.select_action(timestep.observation)
+            timestep = env.step(action)
+            steptype = timestep.step_type
+            r = timestep.reward
+            state = timestep.observation[0]
+            t += 1 # increment time step
+            epsr += r # episode cumulative reward
+            if steptype==2: # if final timestep
+              ends = True
+              if (t<bwcfg.configurations['plan']['max_steps']-1) or (epsr>0.85):
+                lvlsolved.append(1) # terminates early or solved at max step
+                lvlsteps.append(t)
+              else:
+                lvlsolved.append(0)
+            # print(f"\tt={t}, action_name: {action_dict[int(action)]}, r={round(float(r),5)}, ends={ends}")
+          lvlepsr.append(epsr)
+        if len(lvlsteps)==0:
+          lvlsteps=[np.nan]
+        print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
+                \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})\
+                \n\tavg steps {round(np.mean(lvlsteps), 6)} (sem={round(sem(lvlsteps), 6)})")
+        qlsolved.append(round(np.mean(lvlsolved),6))
+        qlsolvedsem.append(round(sem(lvlsolved),6))
+        qlreward.append(round(np.mean(lvlepsr),6))
+        qlrewardsem.append(round(sem(lvlepsr),6))
+        qlsteps.append(round(np.nanmean(lvlsteps), 6))
+        qlstepssem.append(round(sem(lvlsteps, nan_policy="omit"), 6))
+
+        print(f"Expert")
+        lvlsolved = []
+        lvlepsr = []
+        lvlsteps = [] # num of expert steps
+        for irepeat, puzzle in zip(range(nrepeats), puzzles):
+          # print(f"irepeat {irepeat}")
+          _, sim = make_test_environment(puzzle_num_blocks=fixed_num_blocks, 
+                                compositional=compositional, 
+                                  compositional_type=compositional_type, compositional_holdout=compositional_holdout,
+                                test_puzzle=puzzle)
+          state, _ = sim.reset()
+          epsr = 0
+          expert_demo = bwutils.expert_demo_plan(sim)
+          for t, a in enumerate(expert_demo):
+            state, r, terminated, truncated, _ = sim.step(a)
+            epsr += r # episode cumulative reward
+            # print(f"\tt={t}, action_name: {action_dict[int(a)]}, r={round(float(r),5)}")
+          lvlepsr.append(epsr)
+          lvlsolved.append(1)
+          lvlsteps.append(len(expert_demo))
+        print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
+                \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})\
+                \n\tavg steps {round(np.mean(lvlsteps), 6)} (sem={round(sem(lvlsteps), 6)})")
+        expertsolved.append(round(np.mean(lvlsolved),6))
+        expertsolvedsem.append(round(sem(lvlsolved),6))
+        expertreward.append(round(np.mean(lvlepsr),6))
+        expertrewardsem.append(round(sem(lvlepsr),6))
+        expertsteps.append(round(np.mean(lvlsteps), 6))
+        expertstepssem.append(round(sem(lvlsteps), 6))
+
+        print(f"Random")
+        lvlsolved = []
+        lvlepsr = []
+        lvlsteps = [] # num of steps to solve
+        for irepeat, puzzle in zip(range(nrepeats), puzzles):
+          _, sim = make_test_environment(puzzle_num_blocks=fixed_num_blocks, 
+                                compositional=compositional, 
+                                  compositional_type=compositional_type, compositional_holdout=compositional_holdout,
+                                test_puzzle=puzzle)
+          state, _ = sim.reset()
+          epsr = 0
+          ends = False
+          t=0
+          while not ends:
+            t+=1
+            a = random.choice(range(sim.num_actions))
+            state, r, terminated, truncated, _ = sim.step(a)
+            epsr += r # episode cumulative reward
+            if terminated:
+              ends = True
+              lvlsolved.append(1)
+              lvlsteps.append(t)
+            elif truncated:
+              ends=True
+              lvlsolved.append(0)
+          lvlepsr.append(epsr)
+        if len(lvlsteps)==0:
+          lvlsteps=[np.nan]
+        print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
+                \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})\
+                \n\tavg steps {round(np.mean(lvlsteps), 6)} (sem={round(sem(lvlsteps), 6)})")
+        randomsolved.append(round(np.mean(lvlsolved),6))
+        randomsolvedsem.append(round(sem(lvlsolved),6))
+        randomreward.append(round(np.mean(lvlepsr),6))
+        randomrewardsem.append(round(sem(lvlepsr),6))
+        randomsteps.append(round(np.nanmean(lvlsteps), 6))
+        randomstepssem.append(round(sem(lvlsteps, nan_policy="omit"), 6))
+
+      print(f"qlsolved={qlsolved}\nqlsolvedsem={qlsolvedsem}\
+          \nqlsteps={qlsteps}\nqlstepssem={qlstepssem}")
 
 
 
@@ -390,17 +631,25 @@ mamba activate neurorl
 
 if __name__ == "__main__":
   random.seed(0)
-  main(lvls=[2,3,4], 
+  main(
+      # lvls=[2,3,4,5], 
+      lvls=[],
       compositional=False, 
           compositional_type='newblock', compositional_holdout=[2,3,5,7],
       groupname='easy2-10plan', 
-      nrepeats=200)
-  '''
-  puzzle_max_blocks: 10
-  puzzle_max_stacks: 5
-  stack_max_blocks: 7
-  curriculum: 2 ~ 4 (no leak)
-  compositional: False
+      eval_test_puzzles=False,
+      eval_num_stacks=True, fixed_num_blocks=4,
+      nrepeats=400,
+      )
 
+'''
+'easy2-10plan'
+  stack_max_blocks: 7, 
+  puzzle_max_blocks: 10,
+  puzzle_max_stacks: 5,
+  curriculum: 2~10 (no leak),
+  up_threshold: 0.6,?
+  down_threshold: 0.4,?
+  compositional: False,
 
-  '''
+'''

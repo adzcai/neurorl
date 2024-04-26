@@ -34,6 +34,7 @@ class Simulator():
 			  episode_max_reward=configurations['episode_max_reward'],
 			  max_steps=cfg['max_steps'],
 			  reward_decay_factor=cfg['reward_decay_factor'],
+			  sparse_reward=cfg['sparse_reward'],
 			  action_cost=cfg['action_cost'],
 			  empty_block_unit=cfg['empty_block_unit'],
 			  evaluation=False, eval_puzzle_num_blocks=None,
@@ -48,6 +49,7 @@ class Simulator():
 		self.stack_max_blocks = stack_max_blocks
 		self.episode_max_reward = episode_max_reward
 		self.reward_decay_factor = reward_decay_factor 
+		self.sparse_reward = sparse_reward
 		self.action_cost = action_cost
 		self.max_steps = max_steps # maximum number of actions allowed in an episode
 		self.verbose = verbose
@@ -64,11 +66,11 @@ class Simulator():
 	def close(self):
 		del self.state
 		del self.input_stacks, self.goal_stacks, self.flipped_goal_stacks, self.puzzle_num_blocks
-		del self.unit_reward
+		del self.unit_reward, self.sparse_reward
 		del self.action_dict, self.action_to_statechange
 		del self.current_time
 		del self.evaluation, self.eval_puzzle_num_blocks
-		del self.compositional, self.compositional_type, self.compositional_eval, self.compositional_eval
+		del self.compositional, self.compositional_type, self.compositional_holdout
 		return 
 
 	def reset(self, puzzle_num_blocks=None, curriculum=None):
@@ -95,7 +97,7 @@ class Simulator():
 			if curriculum==None:
 				import envs.blocksworld.cfg as config
 				curriculum = config.configurations['plan']['curriculum']
-				leak = config.configurations['plan']['leak']
+			leak = cfg['leak']
 			self.puzzle_num_blocks, input_stacks, goal_stacks = utils.sample_random_puzzle(puzzle_max_stacks=self.puzzle_max_stacks, 
 																					puzzle_max_blocks=self.puzzle_max_blocks, 
 																					stack_max_blocks=self.stack_max_blocks,
@@ -107,7 +109,7 @@ class Simulator():
 																					compositional_holdout=self.compositional_holdout,
 																					) 
 		assert puzzle_num_blocks==None or (puzzle_num_blocks == self.puzzle_num_blocks)
-		print(f"reset, puzzle_num blocks {self.puzzle_num_blocks}, inputs{input_stacks}, goal{goal_stacks}")
+		# print(f"reset, puzzle_num blocks {self.puzzle_num_blocks}, inputs{input_stacks}, goal{goal_stacks}")
 		# format the input and goal to same size: [puzzle_max_stacks, stack_max_blocks]
 		self.goal_stacks = [[-1 for _ in range(self.stack_max_blocks)] for _ in range(self.puzzle_max_stacks)] 
 		for istack in range(len(goal_stacks)): # stack reads from top/highest block to bottom/lowest block, then filled by -1s
@@ -247,7 +249,7 @@ class Simulator():
 				self.__set_state([[sidx], [block]])
 				print('\tremove top block', block) if self.verbose else 0
 				units, terminated, correct_history = self.__reward(cur_stacks=self.flip(self.decode_cur_stacks()), goal_stacks=self.flipped_goal_stacks)
-				reward += units * self.unit_reward
+				reward += units * self.unit_reward if (not self.sparse_reward) else 0
 				self.__set_state([action_to_statechange['correct_history'], correct_history])
 		elif action_name == "add":
 			if self.__stack_empty(istart=action_to_statechange['table'][table_pointer], length=1): 
@@ -260,7 +262,7 @@ class Simulator():
 				block = self.__pop_from_stack(istart=action_to_statechange['table'][table_pointer], length=1) # pop from table
 				self.__insert_top_block(block=block, istart=action_to_statechange['cur_stacks_begin'][stack_pointer], length=self.stack_max_blocks)
 				units, terminated, correct_history = self.__reward(cur_stacks=self.flip(self.decode_cur_stacks()), goal_stacks=self.flipped_goal_stacks)
-				reward += units * self.unit_reward
+				reward += units * self.unit_reward if (not self.sparse_reward) else 0
 				self.__set_state([action_to_statechange['correct_history'], correct_history])
 		elif action_name == "parse_input": # BAD, parse input repetitively
 			assert input_parsed
@@ -275,6 +277,8 @@ class Simulator():
 		self.current_time += 1
 		if self.current_time >= self.max_steps:
 			truncated = True
+		if self.sparse_reward and terminated:
+			reward += self.episode_max_reward
 		return self.state.copy(), reward, terminated, truncated, info
 
 	def flip(self, stacks):
@@ -691,7 +695,7 @@ class Test(test_utils.EnvironmentTestMixin, absltest.TestCase):
 
 if __name__ == '__main__':
 	# random.seed(1)
-	test_simulator(expert=False, repeat=2000, verbose=False)
+	# test_simulator(expert=False, repeat=2000, verbose=False)
 	test_simulator(expert=True, repeat=1000, verbose=False)
 
 	absltest.main()

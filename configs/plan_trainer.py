@@ -10,11 +10,11 @@ python configs/plan_trainer.py \
   --parallel='sbatch' \
   --num_actors=1 \
   --use_wandb=True \
-  --partition=gpu_test \
+  --partition=gpu \
   --wandb_entity=yichenli \
   --wandb_project=plan \
   --run_distributed=True \
-  --time=0-12:00:00 
+  --time=0-72:00:00 
 
 // test in interactive session
 python configs/plan_trainer.py \
@@ -68,7 +68,7 @@ plotfreq = 50000 # frequency to plot action trajectory
 UP_PRESSURE_THRESHOLD = 5 # pressure threshold to increase curriculum
 DOWN_PRESSURE_THRESHOLD = 10 # pressure threshold to decrease curriculum
 UP_REWARD_THRESHOLD = 0.8 # upper reward threshold for incrementing up pressure
-DOWN_REWARD_THRESHOLD = 0.5 # lower reward threshold for incrementing down pressure
+DOWN_REWARD_THRESHOLD = -2 #0.5 # lower reward threshold for incrementing down pressure
 up_pressure = 0 # initial up pressure
 down_pressure = 0 # initial down pressure
 
@@ -641,7 +641,7 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['2~10plan5v8currleak']),
+            "group": tune.grid_search(['Qsparse3~10comp-2v8max1-11-7']),
             "num_steps": tune.grid_search([500e6]),
 
             "samples_per_insert": tune.grid_search([20.0]),

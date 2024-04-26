@@ -984,6 +984,8 @@ def sample_random_puzzle(puzzle_max_stacks, puzzle_max_blocks, stack_max_blocks,
 			if curriculum==0: # uniform
 				puzzle_num_blocks = random.choice(list(range(2, puzzle_max_blocks+1)))
 			else:
+				if compositional and compositional_type=='newblock':
+					curriculum = min(curriculum, puzzle_max_blocks-len(compositional_holdout))
 				population = list(range(2, puzzle_max_blocks+1)) # possible number of blocks in puzzle
 				weights = np.zeros_like(population, dtype=np.float32)
 				if (not leak) or (compositional and compositional_type=='newblock'):
@@ -1008,6 +1010,7 @@ def sample_random_puzzle(puzzle_max_stacks, puzzle_max_blocks, stack_max_blocks,
 				available_blocks = list(set(range(puzzle_max_blocks)) - set(compositional_holdout))[:puzzle_num_blocks]
 				assert len(available_blocks)>=puzzle_num_blocks, \
 					f"compositional training {available_blocks} contains fewer elements than required by a puzzle ({puzzle_num_blocks})"
+		input_blocks = copy.deepcopy(available_blocks)
 		input_stacks = []
 		for _ in range(puzzle_max_stacks):
 			if len(available_blocks)==0:
@@ -1036,16 +1039,7 @@ def sample_random_puzzle(puzzle_max_stacks, puzzle_max_blocks, stack_max_blocks,
 				if len(available_blocks)==0:
 					break # no more remaining blocks available, done
 		# sample goal stacks
-		available_blocks = list(range(puzzle_num_blocks))
-		if compositional and compositional_type=='newblock': # holdout a set of block ids
-			if compositional_eval: # eval mode
-				assert puzzle_num_blocks<=len(compositional_holdout), \
-					f"compositional holdout {compositional_holdout} contains fewer elements than required by a puzzle ({puzzle_num_blocks})"
-				available_blocks = random.sample(compositional_holdout, k=puzzle_num_blocks)
-			else: # training mode
-				available_blocks = list(set(range(puzzle_max_blocks)) - set(compositional_holdout))[:puzzle_num_blocks]
-				assert len(available_blocks)>=puzzle_num_blocks, \
-					f"compositional training {available_blocks} contains fewer elements than required by a puzzle ({puzzle_num_blocks})"
+		available_blocks = input_blocks
 		goal_stacks = []
 		for _ in range(puzzle_max_stacks):
 			if len(available_blocks)==0:
@@ -1081,3 +1075,6 @@ def sample_random_puzzle(puzzle_max_stacks, puzzle_max_blocks, stack_max_blocks,
 				return puzzle_num_blocks, input_stacks, goal_stacks
 			else:
 				print(f"\n\nProposed puzzle [ {input_stacks}, {goal_stacks} ] overlaps with test puzzle, skip.\n\n")
+
+
+
