@@ -951,6 +951,82 @@ def expert_demo_plan(simulator):
 	return final_actions # list of integers representing actions
 
 
+
+def _intersection(cur, goal):
+	for i in range(len(cur)): # from bottom to top
+		if cur[i]!=goal[i] or cur[i]==goal[i]==-1:
+			ntoremove = sum([1 for b in cur[i:] if b!=-1 ])
+			ntoadd =  sum([1 for b in goal[i:] if b!=-1])
+			ncorrect = i
+			return ntoremove, ntoadd, ncorrect
+	return 0, 0, len(cur)
+
+
+def oracle_demo_plan(simulator):
+	'''
+	optimal solution for planning: 
+		remove non-intersected blocks, then reassemble 
+	'''
+	input_stacks = simulator.input_stacks # each stack read from highest/top to lowest/bottom block, then filled by -1s
+	goal_stacks = simulator.flipped_goal_stacks # each stack read from lowest/bottom to highest/top block, then filled by -1s
+	final_actions = []
+	# first need to parse input and goal
+	action = "parse_input"
+	final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+	action = "parse_goal"
+	final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+	# remove everything from cur stacks
+	table = [] # a cache storing blocks on the table
+	cur_pointer = 0 # current pointer to cur stacks
+	table_pointer = 0 # current pointer to table stacks
+	stacksntoremove = []
+	stacksntoadd = []
+	stacksncorrect = []
+	for istack in range(simulator.puzzle_max_stacks):
+		ntoremove, ntoadd, ncorrect = _intersection(simulator.flip(simulator.input_stacks)[istack], goal_stacks[istack])
+		stacksntoremove.append(ntoremove)
+		stacksntoadd.append(ntoadd)
+		stacksncorrect.append(ncorrect)
+		for jblock in range(ntoremove): # from top/highest to bottom/lowest
+			assert input_stacks[istack][jblock]!=-1 # no more blocks in this stack
+			action = "remove"
+			final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+			table.append(input_stacks[istack][jblock]) # record the blocks put on table
+		if simulator.puzzle_max_stacks>1 and istack!=simulator.puzzle_max_stacks-1: # move to next stack if applicable
+			if _intersection(simulator.flip(simulator.input_stacks)[istack+1], goal_stacks[istack+1])[0] > 0:
+				action = "next_stack"
+				final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+				cur_pointer += 1
+	# add blocks according to goal
+	while cur_pointer!=simulator.puzzle_max_stacks-1 and stacksntoadd[simulator.puzzle_max_stacks-1]>0: 
+		action = "next_stack" # check if need to start from the last stack
+		final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+		cur_pointer += 1
+	for istack in range(cur_pointer, -1, -1):
+		ntoadd = stacksntoadd[istack]
+		ncorrect = stacksncorrect[istack]
+		for jblock in range(ncorrect, ncorrect+ntoadd): # from bottom/lowest to top/highest
+			assert goal_stacks[istack][jblock]!=-1 # should be nonempty
+			blocktoadd = goal_stacks[istack][jblock]
+			loc = table.index(blocktoadd) # table stack idx containing this block
+			if loc - table_pointer > 0: # should move to the right to reach the table stack
+				for _ in range(loc - table_pointer):
+					action = "next_table"
+					final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+			elif loc - table_pointer < 0:
+				for _ in range(table_pointer - loc):
+					action = "previous_table"
+					final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+			table_pointer = loc # table pointer is now moved to the table stack to be added
+			action = "add" # add the block 
+			final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+		if istack>0 and stacksntoadd[istack-1]>0:
+			action = "previous_stack"
+			final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+	return final_actions # list of integers representing actions
+
+
+
 def sample_random_puzzle(puzzle_max_stacks, puzzle_max_blocks, stack_max_blocks,
 						puzzle_num_blocks, 
 						curriculum, leak,
@@ -1003,9 +1079,16 @@ def sample_random_puzzle(puzzle_max_stacks, puzzle_max_blocks, stack_max_blocks,
 		available_blocks = list(range(puzzle_num_blocks)) # pool of all block ids for this puzzle
 		if compositional and compositional_type=='newblock': # holdout a set of block ids
 			if compositional_eval: # eval mode
-				assert puzzle_num_blocks<=len(compositional_holdout), \
-					f"compositional holdout {compositional_holdout} contains fewer elements than required by a puzzle ({puzzle_num_blocks})"
-				available_blocks = random.sample(compositional_holdout, k=puzzle_num_blocks)
+				available_blocks = random.sample(compositional_holdout, # sample some blocks from holdout
+										# k=min(random.choice(range(1,puzzle_num_blocks+1)), len(compositional_holdout)),
+										k=1,
+										)
+				if len(available_blocks)<puzzle_num_blocks: # fill the rest blocks
+					trainblocks = list(set(range(puzzle_max_blocks)) - set(compositional_holdout)) # blocks used for training
+					unselectedblocks = list(set(range(puzzle_max_blocks)) - set(available_blocks)) # all remaining blocks including comp holdout
+					# available_blocks += random.sample(unselectedblocks, k=puzzle_num_blocks-len(available_blocks))
+					available_blocks += random.sample(trainblocks, k=puzzle_num_blocks-len(available_blocks))
+					assert len(available_blocks) == puzzle_num_blocks
 			else: # training mode
 				available_blocks = list(set(range(puzzle_max_blocks)) - set(compositional_holdout))[:puzzle_num_blocks]
 				assert len(available_blocks)>=puzzle_num_blocks, \

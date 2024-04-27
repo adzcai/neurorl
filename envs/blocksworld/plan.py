@@ -39,6 +39,7 @@ class Simulator():
 			  empty_block_unit=cfg['empty_block_unit'],
 			  evaluation=False, eval_puzzle_num_blocks=None,
 			  compositional=cfg['compositional'], 
+			  compositional_eval=False,
 			  compositional_type=cfg['compositional_type'], 
 			  compositional_holdout=cfg['compositional_holdout'],
 			  test_puzzle=None,
@@ -59,6 +60,7 @@ class Simulator():
 		self.evaluation = evaluation # whether is in evaluation mode
 		self.eval_puzzle_num_blocks = eval_puzzle_num_blocks # eval puzzle lvl
 		self.compositional = compositional # whether is compositional setting
+		self.compositional_eval = compositional_eval # whether to sample from holdout or train split
 		self.compositional_type = compositional_type # {None, 'newblock', 'newconfig'}
 		self.compositional_holdout = compositional_holdout # list of block ids to holdout for compositional training
 		self.test_puzzle = test_puzzle
@@ -70,7 +72,7 @@ class Simulator():
 		del self.action_dict, self.action_to_statechange
 		del self.current_time
 		del self.evaluation, self.eval_puzzle_num_blocks
-		del self.compositional, self.compositional_type, self.compositional_holdout
+		del self.compositional, self.compositional_eval, self.compositional_type, self.compositional_holdout
 		return 
 
 	def reset(self, puzzle_num_blocks=None, curriculum=None):
@@ -90,7 +92,7 @@ class Simulator():
 																						curriculum=None, leak=False,
 																						compositional=self.compositional, 
 																						compositional_type=self.compositional_type,
-																						compositional_eval=self.compositional,
+																						compositional_eval=self.compositional_eval,
 																						compositional_holdout=self.compositional_holdout,
 																						) 
 		else: # training mode
@@ -541,7 +543,8 @@ def test_simulator(expert=True, repeat=10, verbose=False):
 			state, info = sim.reset(puzzle_num_blocks=None, curriculum=puzzle_num_blocks) # use curriculum distribution
 			# state, info = sim.reset(puzzle_num_blocks=puzzle_num_blocks, curriculum=None) # specify num blocks
 			print(f'------------ repeat {r}, state after reset\t{state}') if verbose else 0
-			expert_demo = utils.expert_demo_plan(sim) if expert else None
+			# expert_demo = utils.expert_demo_plan(sim) if expert else None
+			expert_demo = utils.oracle_demo_plan(sim) if expert else None
 			rtotal = 0 # total reward of episode
 			nsteps = sim.max_steps if (not expert) else len(expert_demo)
 			print(f"expert_demo: {expert_demo}")  if verbose else 0
@@ -694,7 +697,7 @@ class Test(test_utils.EnvironmentTestMixin, absltest.TestCase):
 
 
 if __name__ == '__main__':
-	# random.seed(1)
+	random.seed(1)
 	# test_simulator(expert=False, repeat=2000, verbose=False)
 	test_simulator(expert=True, repeat=1000, verbose=False)
 

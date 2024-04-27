@@ -285,7 +285,7 @@ class QObserver(basics.ActorObserver):
                           style='italic', bbox={'facecolor': 'orange', 'alpha': 0.2, 'pad': 1})
         ax[irow,jcol].text(0.2, 8, f"Goal:\n{observations[t][cut1:cut2].reshape(configurations['puzzle_max_stacks'], configurations['stack_max_blocks'])}", 
                           style='italic', bbox={'facecolor': 'green', 'alpha': 0.2, 'pad': 1})
-        ax[irow,jcol].text(0.2, 5, f"Table:\n{observations[t][cut2:cut3].reshape(2,-1)}", 
+        ax[irow,jcol].text(0.2, 5, f"Table:\n{observations[t][cut2:cut3].reshape(min(2, configurations['puzzle_max_blocks']//7),-1)}", 
                           style='italic', bbox={'facecolor': 'gray', 'alpha': 0.2, 'pad': 1})
         ax[irow,jcol].text(0.2, 3, f"Correct: {observations[t][cut3:cut4]}", 
                           style='italic', bbox={'facecolor': 'blue', 'alpha': 0.2, 'pad': 1})

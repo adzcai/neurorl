@@ -24,7 +24,7 @@ configurations = {
 'skip_relocated': True,
 'stack_max_blocks': 7, # max num of blocks in any stack
 'puzzle_max_blocks': 11, # max num blocks in a planning puzzle (across all stacks)
-'puzzle_max_stacks': 1, # maximum number of stacks allowed in a puzzle
+'puzzle_max_stacks': 2, # maximum number of stacks allowed in a puzzle
 'episode_max_reward': 1, # max reward for solving the entire episode correctly
 
 'plan':
@@ -37,7 +37,7 @@ configurations = {
 	'empty_block_unit': 0.005, # reward unit to give for each correct empty block
 	'num_actions': None, # number of actions in the brain, will be filled once env is created
 	'action_dict': None, # action dict, will be filled once env is created
-	'curriculum': 3, # starting level, determine number of blocks in puzzle, in {0 (uniform), 2,..., puzzle_max_blocks}
+	'curriculum': 4, # starting level, determine number of blocks in puzzle, in {0 (uniform), 2,..., puzzle_max_blocks}
 	'leak': False, # whether to leak harder puzzles during curriculum
 	'compositional': True, # whether in compositional mode
 	'compositional_type': 'newblock', # {None, 'newblock', 'newconfig'}, if None: do not apply compositional training, 

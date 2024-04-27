@@ -3,7 +3,7 @@ from envs.blocksworld.AC.blocks_brain import *
 # The number of node areas to be used to represent a block world instance
 MAX_NODES_AREAS = 3
 # The maximum number of stacks in the block world instance
-MAX_STACKS = 5 # TODO: need to change it from 1 back to 5 when running test.py
+MAX_STACKS = 1 # TODO: need to change it from 1 back to 5 when running test.py
 
 ''' 
 The "input" node areas. They are of the form " I2_N3 ", 

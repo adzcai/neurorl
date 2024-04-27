@@ -623,8 +623,6 @@ def main(lvls, compositional, compositional_type, compositional_holdout,
 
 '''
 salloc -p test -t 0-01:00 --mem=200000 
-
-salloc -p gpu_test -t 0-01:00 --mem=8000 --gres=gpu:1
 module load python/3.10.12-fasrc01
 mamba activate neurorl
 '''

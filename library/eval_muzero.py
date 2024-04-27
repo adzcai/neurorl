@@ -24,6 +24,18 @@ from acme import wrappers as acme_wrappers
 import dm_env
 from envs.blocksworld import plan
 
+import configs.plan_trainer_muzero as muzerotrainer 
+import envs.blocksworld.cfg as bwcfg
+from td_agents import muzero
+import functools
+import mctx
+import library.utils as utils
+import envs.blocksworld.utils as bwutils
+
+import haiku as hk
+import jax.numpy as jnp
+
+
 def load_config(filename):
   with open(filename, 'rb') as fp:
     config = pickle.load(fp)
@@ -137,20 +149,33 @@ def load_settings(
   return seed_path, final_env_config, final_agent_config
 
 
-def make_test_environment(puzzle_num_blocks: int, 
+def make_test_environment(
+                        puzzle_max_stacks, 
+                        puzzle_max_blocks, 
+                        stack_max_blocks, 
+                        sparse_reward,
+                        evaluation, 
+                        eval_puzzle_num_blocks,
                         compositional, 
-                          compositional_type, compositional_holdout, 
-                        test_puzzle):
+                        compositional_eval,
+                        compositional_type, 
+                        compositional_holdout,
+                        test_puzzle,
+                        ):
   """
   Make plan env for testing
   Returns:
     dm_env.Environment object, with multiple elements wrapped together (simulator, observation, action, reward, single precision).
   """
   # create dm_env
-  sim = plan.Simulator(evaluation=True, 
-                      eval_puzzle_num_blocks=puzzle_num_blocks,
-                      compositional=compositional, 
-                        compositional_type=compositional_type, compositional_holdout=compositional_holdout,
+  sim = plan.Simulator(puzzle_max_stacks=puzzle_max_stacks,
+                      puzzle_max_blocks=puzzle_max_blocks,
+                      stack_max_blocks=stack_max_blocks,
+                      sparse_reward=sparse_reward,
+                      evaluation=evaluation,
+                      eval_puzzle_num_blocks=eval_puzzle_num_blocks,
+                      compositional=compositional, compositional_eval=compositional_eval,
+                      compositional_type=compositional_type, compositional_holdout=compositional_holdout,
                       test_puzzle=test_puzzle)
   sim.reset()
   # insert info into cfg
@@ -166,11 +191,19 @@ def make_test_environment(puzzle_num_blocks: int,
   return acme_wrappers.wrap_all(env, wrapper_list), sim
 
 
-def main(lvls, compositional, compositional_type, compositional_holdout,
+def main(
+        eval_lvls, lvls, 
+        puzzle_max_stacks, 
+        puzzle_max_blocks, 
+        stack_max_blocks, 
+        sparse_reward,
+        compositional, 
+        compositional_eval, compositional_type, compositional_holdout,
         groupname, searchname='initial', 
         eval_test_puzzles=False,
         eval_num_stacks=False, fixed_num_blocks=None,
-        nrepeats=100):
+        nrepeats=100,
+        ):
     '''
       lvls: list[int]
         list of puzzle_num_blocks to evaluate, should be within range [2, puzzle_max_blocks]
@@ -196,200 +229,290 @@ def main(lvls, compositional, compositional_type, compositional_holdout,
       base_dir=base_dir,
       run='.')
 
-    from configs.plan_trainer_muzero import make_muzero_networks, MuObserver
-    import envs.blocksworld.cfg as bwcfg
-    from td_agents import muzero
-    import functools
-    import mctx
-    import library.utils as utils
-    import envs.blocksworld.utils as bwutils
+
     config = muzero.Config(**agent_kwargs)
+
+    def tmp_obs_encoder(
+        inputs: acme_wrappers.observation_action_reward.OAR,
+        num_actions: int,
+        stack_max_blocks: int=stack_max_blocks,
+        puzzle_max_blocks: int=puzzle_max_blocks,
+        puzzle_max_stacks: int=puzzle_max_stacks):
+      # embeddings for different elements in state repr
+      curstack_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+      cut1 = stack_max_blocks*puzzle_max_stacks # state idx as cutting point
+      goalstack_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+      cut2 = cut1+stack_max_blocks*puzzle_max_stacks
+      table_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+      cut3 = cut2+puzzle_max_blocks
+      corhist_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+      cut4 = cut3+puzzle_max_stacks
+      spointer_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+      cut5 = cut4+1
+      tpointer_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+      cut6 = cut5+1
+      iparsed_embed = hk.Linear(64, w_init=hk.initializers.TruncatedNormal())
+      cut7 = cut6+1
+      gparsed_embed = hk.Linear(64, w_init=hk.initializers.TruncatedNormal())
+      # embeddings for prev reward and action
+      reward_embed = hk.Linear(128, w_init=hk.initializers.RandomNormal())
+      action_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+      # backbone of the encoder: mlp with relu
+      mlp = hk.nets.MLP([512,512,512,512], activate_final=True) # default RELU activations between layers (and after final layer)
+      def fn(x, dropout_rate=None):
+        # concatenate embeddings and previous reward and action
+        x = jnp.concatenate((
+            curstack_embed(jax.nn.one_hot(x.observation[:cut1], puzzle_max_blocks).reshape(-1)),
+            goalstack_embed(jax.nn.one_hot(x.observation[cut1:cut2], puzzle_max_blocks).reshape(-1)),
+            table_embed(jax.nn.one_hot(x.observation[cut2:cut3], puzzle_max_blocks).reshape(-1)),
+            corhist_embed(jax.nn.one_hot(x.observation[cut3:cut4], stack_max_blocks).reshape(-1)),
+            spointer_embed(jax.nn.one_hot(x.observation[cut4:cut5], puzzle_max_stacks).reshape(-1)),
+            tpointer_embed(jax.nn.one_hot(x.observation[cut5:cut6], puzzle_max_blocks).reshape(-1)),
+            iparsed_embed(jax.nn.one_hot(x.observation[cut6:cut7], 2).reshape(-1)),
+            iparsed_embed(jax.nn.one_hot(x.observation[cut7:], 2).reshape(-1)),
+            reward_embed(jnp.expand_dims(x.reward, 0)), 
+            action_embed(jax.nn.one_hot(x.action, num_actions))  
+          ))
+        # relu first, then mlp, relu
+        x = jax.nn.relu(x)
+        x = mlp(x, dropout_rate=dropout_rate)
+        return x
+      # If there's a batch dim, applies vmap first.
+      has_batch_dim = inputs.reward.ndim > 0
+      if has_batch_dim: # have batch dimension
+        fn = jax.vmap(fn)
+      return fn(inputs)
+
+    muzerotrainer.observation_encoder = lambda inputs, num_actions: tmp_obs_encoder(inputs=inputs,num_actions=num_actions)
+
 
     modelsolved = [] # ratio of puzzles solved
     modelsolvedsem = [] 
-    expertsolved = []
-    expertsolvedsem = []
+    oraclesolved = []
+    oraclesolvedsem = []
+    heuristicsolved = []
+    heuristicsolvedsem = []
     randomsolved = []
     randomsolvedsem = []
     modelreward = [] # avg episode reward
     modelrewardsem = []
-    expertreward = []
-    expertrewardsem = []
+    oraclereward = []
+    oraclerewardsem = []
+    heuristicreward = []
+    heuristicrewardsem = []
     randomreward = []
     randomrewardsem = []
     modelsteps = [] # num of steps for solving a puzzle 
     modelstepssem = []
-    expertsteps = [] # num of steps for solving a puzzle
-    expertstepssem = []
+    oraclesteps = []
+    oraclestepssem = []
+    heuristicsteps = [] # num of steps for solving a puzzle
+    heuristicstepssem = []
     randomsteps = [] # num of steps for solving a puzzle
     randomstepssem = []
 
-    for lvl in lvls:
-      env, sim = make_test_environment(puzzle_num_blocks=lvl, 
-                              compositional=compositional, 
-                                compositional_type=compositional_type, compositional_holdout=compositional_holdout,
-                              test_puzzle=None)
-      mcts_policy = functools.partial(
-        mctx.gumbel_muzero_policy,
-        max_depth=config.max_sim_depth,
-        num_simulations=config.num_simulations,
-        gumbel_scale=config.gumbel_scale)
-      discretizer = utils.Discretizer(
-                    num_bins=config.num_bins,
-                    max_value=config.max_scalar_value,
-                    tx_pair=config.tx_pair,
-                )
-      builder = basics.Builder(
-        config=config,
-        get_actor_core_fn=functools.partial(
-            muzero.get_actor_core,
-            evaluation=True,
-            mcts_policy=mcts_policy,
-            discretizer=discretizer,
-        ),
-        ActorCls=functools.partial(
-          basics.BasicActor,
-          observers=[MuObserver(period=100000)],
+    if eval_lvls and len(lvls)>0:
+      for lvl in lvls:
+        env, sim = make_test_environment(
+                                        puzzle_max_stacks=puzzle_max_stacks,
+                                        puzzle_max_blocks=puzzle_max_blocks,
+                                        stack_max_blocks=stack_max_blocks,
+                                        sparse_reward=sparse_reward,
+                                        evaluation=True,
+                                        eval_puzzle_num_blocks=lvl,
+                                        compositional=compositional, compositional_eval=compositional_eval,
+                                        compositional_type=compositional_type, compositional_holdout=compositional_holdout,
+                                        test_puzzle=None,
+                                        )
+        mcts_policy = functools.partial(
+          mctx.gumbel_muzero_policy,
+          max_depth=config.max_sim_depth,
+          num_simulations=config.num_simulations,
+          gumbel_scale=config.gumbel_scale)
+        discretizer = utils.Discretizer(
+                      num_bins=config.num_bins,
+                      max_value=config.max_scalar_value,
+                      tx_pair=config.tx_pair,
+                  )
+        builder = basics.Builder(
+          config=config,
+          get_actor_core_fn=functools.partial(
+              muzero.get_actor_core,
+              evaluation=True,
+              mcts_policy=mcts_policy,
+              discretizer=discretizer,
           ),
-        optimizer_cnstr=muzero.muzero_optimizer_constr,
-        LossFn=muzero.MuZeroLossFn(
-            discount=config.discount,
-            importance_sampling_exponent=config.importance_sampling_exponent,
-            burn_in_length=config.burn_in_length,
-            max_replay_size=config.max_replay_size,
-            max_priority_weight=config.max_priority_weight,
-            bootstrap_n=config.bootstrap_n,
-            discretizer=discretizer,
-            mcts_policy=mcts_policy,
-            simulation_steps=config.simulation_steps,
-            reanalyze_ratio=0.25, 
-            root_policy_coef=config.root_policy_coef,
-            root_value_coef=config.root_value_coef,
-            model_policy_coef=config.model_policy_coef,
-            model_value_coef=config.model_value_coef,
-            model_reward_coef=config.model_reward_coef,
-        ))
-      network_factory = functools.partial(make_muzero_networks, config=config)
-      load_outputs = load_agent(
-        env=env,
-        config=config,
-        builder=builder,
-        network_factory=network_factory,
-        seed_path=seed_path,
-        use_latest=True,
-        evaluation=True)
-      reload(load_outputs.checkpointer, seed_path) # can use this to load in latest checkpoints
-      action_dict = bwcfg.configurations['plan']['action_dict']
+          ActorCls=functools.partial(
+            basics.BasicActor,
+            observers=[muzerotrainer.MuObserver(period=100000)],
+            ),
+          optimizer_cnstr=muzero.muzero_optimizer_constr,
+          LossFn=muzero.MuZeroLossFn(
+              discount=config.discount,
+              importance_sampling_exponent=config.importance_sampling_exponent,
+              burn_in_length=config.burn_in_length,
+              max_replay_size=config.max_replay_size,
+              max_priority_weight=config.max_priority_weight,
+              bootstrap_n=config.bootstrap_n,
+              discretizer=discretizer,
+              mcts_policy=mcts_policy,
+              simulation_steps=config.simulation_steps,
+              reanalyze_ratio=0.25, 
+              root_policy_coef=config.root_policy_coef,
+              root_value_coef=config.root_value_coef,
+              model_policy_coef=config.model_policy_coef,
+              model_value_coef=config.model_value_coef,
+              model_reward_coef=config.model_reward_coef,
+          ))
+        network_factory = functools.partial(muzerotrainer.make_muzero_networks, config=config)
+        load_outputs = load_agent(
+          env=env,
+          config=config,
+          builder=builder,
+          network_factory=network_factory,
+          seed_path=seed_path,
+          use_latest=True,
+          evaluation=True)
+        reload(load_outputs.checkpointer, seed_path) # can use this to load in latest checkpoints
+        action_dict = bwcfg.configurations['plan']['action_dict']
 
-      print(f"\n----------------------- Evaluating lvl {lvl}")
-      print(f"Muzero {groupname}")
-      lvlsteps = [] # num steps for successful puzzles
-      lvlepsr = [] # episode reward
-      lvlsolved = [] # whether the puzzle is solved
-      for irepeat in range(nrepeats):
-        # print(f"irepeat {irepeat}")
-        reload(load_outputs.checkpointer, seed_path)
-        actor = load_outputs.actor
-        timestep = env.reset()
-        actor.observe_first(timestep)
-        ends = False
-        t = 0
-        epsr = 0
-        while not ends:
-          action = actor.select_action(timestep.observation)
-          timestep = env.step(action)
-          steptype = timestep.step_type
-          r = timestep.reward
-          state = timestep.observation[0]
-          t += 1 # increment time step
-          epsr += r # episode cumulative reward
-          if steptype==2: # if final timestep
-            ends = True
-            if (t<bwcfg.configurations['plan']['max_steps']-1) or (epsr>0.85):
-              lvlsolved.append(1) # terminates early or solved at max step
+        print(f"\n----------------------- Evaluating lvl {lvl}")
+        print(f"Muzero {groupname}")
+        lvlsteps = [] # num steps for successful puzzles
+        lvlepsr = [] # episode reward
+        lvlsolved = [] # whether the puzzle is solved
+        for irepeat in range(nrepeats):
+          # print(f"irepeat {irepeat}")
+          reload(load_outputs.checkpointer, seed_path)
+          actor = load_outputs.actor
+          timestep = env.reset()
+          actor.observe_first(timestep)
+          ends = False
+          t = 0
+          epsr = 0
+          while not ends:
+            action = actor.select_action(timestep.observation)
+            timestep = env.step(action)
+            steptype = timestep.step_type
+            r = timestep.reward
+            state = timestep.observation[0]
+            t += 1 # increment time step
+            epsr += r # episode cumulative reward
+            if steptype==2: # if final timestep
+              ends = True
+              if (t<bwcfg.configurations['plan']['max_steps']-1) or (epsr>0.85):
+                lvlsolved.append(1) # terminates early or solved at max step
+                lvlsteps.append(t)
+              else:
+                lvlsolved.append(0)
+            # print(f"\tt={t}, action_name: {action_dict[int(action)]}, r={round(float(r),5)}, ends={ends}")
+          lvlepsr.append(epsr)
+        if len(lvlsteps)==0:
+          lvlsteps=[np.nan]
+        print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
+                \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})\
+                \n\tavg steps {round(np.mean(lvlsteps), 6)} (sem={round(sem(lvlsteps), 6)})")
+        modelsolved.append(round(np.mean(lvlsolved),6))
+        modelsolvedsem.append(round(sem(lvlsolved),6))
+        modelreward.append(round(np.mean(lvlepsr),6))
+        modelrewardsem.append(round(sem(lvlepsr),6))
+        modelsteps.append(round(np.nanmean(lvlsteps), 6))
+        modelstepssem.append(round(sem(lvlsteps, nan_policy="omit"), 6))
+
+        print(f"Oracle")
+        lvlsolved = []
+        lvlepsr = []
+        lvlsteps = [] # num of heuristic steps
+        for irepeat in range(nrepeats):
+          # print(f"irepeat {irepeat}")
+          state, _ = sim.reset()
+          epsr = 0
+          expert_demo = bwutils.oracle_demo_plan(sim)
+          for t, a in enumerate(expert_demo):
+            state, r, terminated, truncated, _ = sim.step(a)
+            epsr += r # episode cumulative reward
+            # print(f"\tt={t}, action_name: {action_dict[int(a)]}, r={round(float(r),5)}")
+          lvlepsr.append(epsr)
+          lvlsolved.append(1)
+          lvlsteps.append(len(expert_demo))
+        print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
+                \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})\
+                \n\tavg steps {round(np.mean(lvlsteps), 6)} (sem={round(sem(lvlsteps), 6)})")
+        oraclesolved.append(round(np.mean(lvlsolved),6))
+        oraclesolvedsem.append(round(sem(lvlsolved),6))
+        oraclereward.append(round(np.mean(lvlepsr),6))
+        oraclerewardsem.append(round(sem(lvlepsr),6))
+        oraclesteps.append(round(np.mean(lvlsteps), 6))
+        oraclestepssem.append(round(sem(lvlsteps), 6))
+
+        print(f"Heuristic")
+        lvlsolved = []
+        lvlepsr = []
+        lvlsteps = [] # num of expert steps
+        for irepeat in range(nrepeats):
+          # print(f"irepeat {irepeat}")
+          state, _ = sim.reset()
+          epsr = 0
+          expert_demo = bwutils.expert_demo_plan(sim)
+          for t, a in enumerate(expert_demo):
+            state, r, terminated, truncated, _ = sim.step(a)
+            epsr += r # episode cumulative reward
+            # print(f"\tt={t}, action_name: {action_dict[int(a)]}, r={round(float(r),5)}")
+          lvlepsr.append(epsr)
+          lvlsolved.append(1)
+          lvlsteps.append(len(expert_demo))
+        print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
+                \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})\
+                \n\tavg steps {round(np.mean(lvlsteps), 6)} (sem={round(sem(lvlsteps), 6)})")
+        heuristicsolved.append(round(np.mean(lvlsolved),6))
+        heuristicsolvedsem.append(round(sem(lvlsolved),6))
+        heuristicreward.append(round(np.mean(lvlepsr),6))
+        heuristicrewardsem.append(round(sem(lvlepsr),6))
+        heuristicsteps.append(round(np.mean(lvlsteps), 6))
+        heuristicstepssem.append(round(sem(lvlsteps), 6))
+
+        print(f"Random")
+        lvlsolved = []
+        lvlepsr = []
+        lvlsteps = [] # num of steps to solve
+        for irepeat in range(nrepeats):
+          state, _ = sim.reset()
+          epsr = 0
+          ends = False
+          t=0
+          while not ends:
+            t+=1
+            a = random.choice(range(sim.num_actions))
+            state, r, terminated, truncated, _ = sim.step(a)
+            epsr += r # episode cumulative reward
+            if terminated:
+              ends = True
+              lvlsolved.append(1)
               lvlsteps.append(t)
-            else:
+            elif truncated:
+              ends=True
               lvlsolved.append(0)
-          # print(f"\tt={t}, action_name: {action_dict[int(action)]}, r={round(float(r),5)}, ends={ends}")
-        lvlepsr.append(epsr)
-      if len(lvlsteps)==0:
-        lvlsteps=[np.nan]
-      print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
-              \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})\
-              \n\tavg steps {round(np.mean(lvlsteps), 6)} (sem={round(sem(lvlsteps), 6)})")
-      modelsolved.append(round(np.mean(lvlsolved),6))
-      modelsolvedsem.append(round(sem(lvlsolved),6))
-      modelreward.append(round(np.mean(lvlepsr),6))
-      modelrewardsem.append(round(sem(lvlepsr),6))
-      modelsteps.append(round(np.nanmean(lvlsteps), 6))
-      modelstepssem.append(round(sem(lvlsteps, nan_policy="omit"), 6))
+          lvlepsr.append(epsr)
+        if len(lvlsteps)==0:
+          lvlsteps=[np.nan]
+        print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
+                \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})\
+                \n\tavg steps {round(np.mean(lvlsteps), 6)} (sem={round(sem(lvlsteps), 6)})")
+        randomsolved.append(round(np.mean(lvlsolved),6))
+        randomsolvedsem.append(round(sem(lvlsolved),6))
+        randomreward.append(round(np.mean(lvlepsr),6))
+        randomrewardsem.append(round(sem(lvlepsr),6))
+        randomsteps.append(round(np.nanmean(lvlsteps), 6))
+        randomstepssem.append(round(sem(lvlsteps, nan_policy="omit"), 6))
 
-      print(f"Expert")
-      lvlsolved = []
-      lvlepsr = []
-      lvlsteps = [] # num of expert steps
-      for irepeat in range(nrepeats):
-        # print(f"irepeat {irepeat}")
-        state, _ = sim.reset()
-        epsr = 0
-        expert_demo = bwutils.expert_demo_plan(sim)
-        for t, a in enumerate(expert_demo):
-          state, r, terminated, truncated, _ = sim.step(a)
-          epsr += r # episode cumulative reward
-          # print(f"\tt={t}, action_name: {action_dict[int(a)]}, r={round(float(r),5)}")
-        lvlepsr.append(epsr)
-        lvlsolved.append(1)
-        lvlsteps.append(len(expert_demo))
-      print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
-              \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})\
-              \n\tavg steps {round(np.mean(lvlsteps), 6)} (sem={round(sem(lvlsteps), 6)})")
-      expertsolved.append(round(np.mean(lvlsolved),6))
-      expertsolvedsem.append(round(sem(lvlsolved),6))
-      expertreward.append(round(np.mean(lvlepsr),6))
-      expertrewardsem.append(round(sem(lvlepsr),6))
-      expertsteps.append(round(np.mean(lvlsteps), 6))
-      expertstepssem.append(round(sem(lvlsteps), 6))
-
-      print(f"Random")
-      lvlsolved = []
-      lvlepsr = []
-      lvlsteps = [] # num of steps to solve
-      for irepeat in range(nrepeats):
-        state, _ = sim.reset()
-        epsr = 0
-        ends = False
-        t=0
-        while not ends:
-          t+=1
-          a = random.choice(range(sim.num_actions))
-          state, r, terminated, truncated, _ = sim.step(a)
-          epsr += r # episode cumulative reward
-          if terminated:
-            ends = True
-            lvlsolved.append(1)
-            lvlsteps.append(t)
-          elif truncated:
-            ends=True
-            lvlsolved.append(0)
-        lvlepsr.append(epsr)
-      if len(lvlsteps)==0:
-        lvlsteps=[np.nan]
-      print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
-              \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})\
-              \n\tavg steps {round(np.mean(lvlsteps), 6)} (sem={round(sem(lvlsteps), 6)})")
-      randomsolved.append(round(np.mean(lvlsolved),6))
-      randomsolvedsem.append(round(sem(lvlsolved),6))
-      randomreward.append(round(np.mean(lvlepsr),6))
-      randomrewardsem.append(round(sem(lvlepsr),6))
-      randomsteps.append(round(np.nanmean(lvlsteps), 6))
-      randomstepssem.append(round(sem(lvlsteps, nan_policy="omit"), 6))
-
-    print(f"modelsolved={modelsolved}\nmodelsolvedsem={modelsolvedsem}\
-        \nexpertsolved={expertsolved}\nexpertsolvedsem={expertsolvedsem}\
-        \nrandomsolved={randomsolved}\nrandomsolvedsem={randomsolvedsem}\
-        \nmodelsteps={modelsteps}\nmodelstepssem={modelstepssem}\
-        \nexpertsteps={expertsteps}\nexpertstepssem={expertstepssem}\
-        \nrandomsteps={randomsteps}\nrandomstepssem={randomstepssem}")
+      print(f"modelsolved={modelsolved}\nmodelsolvedsem={modelsolvedsem}\
+          \noraclesolved={oraclesolved}\noraclesolvedsem={oraclesolvedsem}\
+          \nheuristicsolved={heuristicsolved}\nheuristicsolvedsem={heuristicsolvedsem}\
+          \nrandomsolved={randomsolved}\nrandomsolvedsem={randomsolvedsem}\
+          \nmodelsteps={modelsteps}\nmodelstepssem={modelstepssem}\
+          \noraclesteps={oraclesteps}\noraclestepssem={oraclestepssem}\
+          \nheuristicsteps={heuristicsteps}\nheuristicstepssem={heuristicstepssem}\
+          \nrandomsteps={randomsteps}\nrandomstepssem={randomstepssem}")
 
     if eval_test_puzzles:
       print(f"\n----------------------- Evaluating test_puzzles")
@@ -398,10 +521,17 @@ def main(lvls, compositional, compositional_type, compositional_holdout,
       lvlsolved = []
       lvlepsr = []
       for puzzle in test_puzzles:
-        env, sim = make_test_environment(puzzle_num_blocks=None, 
-                                        compositional=False, 
-                                          compositional_type=None, compositional_holdout=None,
-                                        test_puzzle=puzzle)
+        env, sim = make_test_environment(
+                                        puzzle_max_stacks=puzzle_max_stacks,
+                                        puzzle_max_blocks=puzzle_max_blocks,
+                                        stack_max_blocks=stack_max_blocks,
+                                        sparse_reward=sparse_reward,
+                                        evaluation=True,
+                                        eval_puzzle_num_blocks=None,
+                                        compositional=False, compositional_eval=False,
+                                        compositional_type=None, compositional_holdout=None,
+                                        test_puzzle=puzzle,
+                                        )
         load_outputs = load_agent(
                                 env=env,
                                 config=config,
@@ -435,14 +565,21 @@ def main(lvls, compositional, compositional_type, compositional_holdout,
       print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
               \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})")
 
-      print(f"Expert")
+      print(f"Heuristic")
       lvlsolved = []
       lvlepsr = []
       for puzzle in test_puzzles:
-        env, sim = make_test_environment(puzzle_num_blocks=None, 
-                                        compositional=False, 
-                                          compositional_type=None, compositional_holdout=None,
-                                        test_puzzle=puzzle)
+        env, sim = make_test_environment(
+                                        puzzle_max_stacks=puzzle_max_stacks,
+                                        puzzle_max_blocks=puzzle_max_blocks,
+                                        stack_max_blocks=stack_max_blocks,
+                                        sparse_reward=sparse_reward,
+                                        evaluation=True,
+                                        eval_puzzle_num_blocks=None,
+                                        compositional=False, compositional_eval=False,
+                                        compositional_type=None, compositional_holdout=None,
+                                        test_puzzle=puzzle,
+                                        )
         for irepeat in range(nrepeats):
           state, _ = sim.reset()
           epsr = 0
@@ -459,10 +596,17 @@ def main(lvls, compositional, compositional_type, compositional_holdout,
       lvlsolved = []
       lvlepsr = []
       for puzzle in test_puzzles:
-        env, sim = make_test_environment(puzzle_num_blocks=None, 
-                                        compositional=False, 
-                                          compositional_type=None, compositional_holdout=None,
-                                        test_puzzle=puzzle)
+        env, sim = make_test_environment(
+                                        puzzle_max_stacks=puzzle_max_stacks,
+                                        puzzle_max_blocks=puzzle_max_blocks,
+                                        stack_max_blocks=stack_max_blocks,
+                                        sparse_reward=sparse_reward,
+                                        evaluation=True,
+                                        eval_puzzle_num_blocks=None,
+                                        compositional=False, compositional_eval=False,
+                                        compositional_type=None, compositional_holdout=None,
+                                        test_puzzle=puzzle,
+                                        )
         for irepeat in range(nrepeats):
           state, _ = sim.reset()
           epsr = 0
@@ -481,24 +625,29 @@ def main(lvls, compositional, compositional_type, compositional_holdout,
       print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
               \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})")
 
-
     if eval_num_stacks and fixed_num_blocks!=None:
       modelsolved = [] # ratio of puzzles solved
       modelsolvedsem = [] 
-      expertsolved = []
-      expertsolvedsem = []
+      heuristicsolved = []
+      heuristicsolvedsem = []
+      oraclesolved = []
+      oraclesolvedsem = []
       randomsolved = []
       randomsolvedsem = []
       modelreward = [] # avg episode reward
       modelrewardsem = []
-      expertreward = []
-      expertrewardsem = []
+      oraclereward = []
+      oraclerewardsem = []
+      heuristicreward = []
+      heuristicrewardsem = []
       randomreward = []
       randomrewardsem = []
       modelsteps = [] # num of steps for solving a puzzle 
       modelstepssem = []
-      expertsteps = [] # num of steps for solving a puzzle
-      expertstepssem = []
+      oraclesteps = []
+      oraclestepssem = []
+      heuristicsteps = [] # num of steps for solving a puzzle
+      heuristicstepssem = []
       randomsteps = [] # num of steps for solving a puzzle
       randomstepssem = []
 
@@ -506,22 +655,30 @@ def main(lvls, compositional, compositional_type, compositional_holdout,
         puzzles = [] # puzzles for this num of stacks
         while len(puzzles)<nrepeats: 
           nb, input_stacks, goal_stacks = bwutils.sample_random_puzzle(puzzle_max_stacks=nstacks, 
-                                                              puzzle_max_blocks=bwcfg.configurations['puzzle_max_blocks'], 
-                                                              stack_max_blocks=bwcfg.configurations['stack_max_blocks'],
+                                                              puzzle_max_blocks=puzzle_max_blocks, 
+                                                              stack_max_blocks=stack_max_blocks,
                                                               puzzle_num_blocks=fixed_num_blocks, 
                                                               curriculum=False, leak=False,
                                                               compositional=compositional, 
+                                                              compositional_eval=compositional_eval, 
                                                                 compositional_type=compositional_type, 
-                                                                compositional_eval=compositional, 
-                                                                compositional_holdout=compositional_holdout)
+                                                                compositional_holdout=compositional_holdout,)
+                                      
           assert nb == fixed_num_blocks
           if len(input_stacks)==nstacks or len(goal_stacks)==nstacks:
             puzzles.append([input_stacks, goal_stacks])
 
-        env, sim = make_test_environment(puzzle_num_blocks=fixed_num_blocks, 
-                                compositional=compositional, 
-                                  compositional_type=compositional_type, compositional_holdout=compositional_holdout,
-                                test_puzzle=puzzles[0])
+        env, sim = make_test_environment(
+                                        puzzle_max_stacks=puzzle_max_stacks,
+                                        puzzle_max_blocks=puzzle_max_blocks,
+                                        stack_max_blocks=stack_max_blocks,
+                                        sparse_reward=sparse_reward,
+                                        evaluation=True,
+                                        eval_puzzle_num_blocks=fixed_num_blocks,
+                                        compositional=compositional, compositional_eval=compositional_eval,
+                                        compositional_type=compositional_type, compositional_holdout=compositional_holdout,
+                                        test_puzzle=puzzles[0],
+                                        )
         mcts_policy = functools.partial(
           mctx.gumbel_muzero_policy,
           max_depth=config.max_sim_depth,
@@ -542,7 +699,7 @@ def main(lvls, compositional, compositional_type, compositional_holdout,
           ),
           ActorCls=functools.partial(
             basics.BasicActor,
-            observers=[MuObserver(period=100000)],
+            observers=[muzerotrainer.MuObserver(period=100000)],
             ),
           optimizer_cnstr=muzero.muzero_optimizer_constr,
           LossFn=muzero.MuZeroLossFn(
@@ -562,7 +719,7 @@ def main(lvls, compositional, compositional_type, compositional_holdout,
               model_value_coef=config.model_value_coef,
               model_reward_coef=config.model_reward_coef,
           ))
-        network_factory = functools.partial(make_muzero_networks, config=config)
+        network_factory = functools.partial(muzerotrainer.make_muzero_networks, config=config)
         load_outputs = load_agent(
           env=env,
           config=config,
@@ -581,10 +738,17 @@ def main(lvls, compositional, compositional_type, compositional_holdout,
         lvlsolved = [] # whether the puzzle is solved
         for irepeat, puzzle in zip(range(nrepeats), puzzles):
           # print(f"irepeat {irepeat}")
-          env, sim = make_test_environment(puzzle_num_blocks=fixed_num_blocks, 
-                                compositional=compositional, 
-                                  compositional_type=compositional_type, compositional_holdout=compositional_holdout,
-                                test_puzzle=puzzle)
+          env, sim = make_test_environment(
+                                        puzzle_max_stacks=puzzle_max_stacks,
+                                        puzzle_max_blocks=puzzle_max_blocks,
+                                        stack_max_blocks=stack_max_blocks,
+                                        sparse_reward=sparse_reward,
+                                        evaluation=True,
+                                        eval_puzzle_num_blocks=fixed_num_blocks,
+                                        compositional=compositional, compositional_eval=compositional_eval,
+                                        compositional_type=compositional_type, compositional_holdout=compositional_holdout,
+                                        test_puzzle=puzzle,
+                                        )
           load_outputs = load_agent(
                                   env=env,
                                   config=config,
@@ -629,16 +793,60 @@ def main(lvls, compositional, compositional_type, compositional_holdout,
         modelsteps.append(round(np.nanmean(lvlsteps), 6))
         modelstepssem.append(round(sem(lvlsteps, nan_policy="omit"), 6))
 
-        print(f"Expert")
+        print(f"Oracle")
+        lvlsolved = []
+        lvlepsr = []
+        lvlsteps = [] # num of heuristic steps
+        for irepeat, puzzle in zip(range(nrepeats), puzzles):
+          # print(f"irepeat {irepeat}")
+          _, sim = make_test_environment(
+                                        puzzle_max_stacks=puzzle_max_stacks,
+                                        puzzle_max_blocks=puzzle_max_blocks,
+                                        stack_max_blocks=stack_max_blocks,
+                                        sparse_reward=sparse_reward,
+                                        evaluation=True,
+                                        eval_puzzle_num_blocks=fixed_num_blocks,
+                                        compositional=compositional, compositional_eval=compositional_eval,
+                                        compositional_type=compositional_type, compositional_holdout=compositional_holdout,
+                                        test_puzzle=puzzle,
+                                        )
+          state, _ = sim.reset()
+          epsr = 0
+          expert_demo = bwutils.oracle_demo_plan(sim)
+          for t, a in enumerate(expert_demo):
+            state, r, terminated, truncated, _ = sim.step(a)
+            epsr += r # episode cumulative reward
+            # print(f"\tt={t}, action_name: {action_dict[int(a)]}, r={round(float(r),5)}")
+          lvlepsr.append(epsr)
+          lvlsolved.append(1)
+          lvlsteps.append(len(expert_demo))
+        print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
+                \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})\
+                \n\tavg steps {round(np.mean(lvlsteps), 6)} (sem={round(sem(lvlsteps), 6)})")
+        oraclesolved.append(round(np.mean(lvlsolved),6))
+        oraclesolvedsem.append(round(sem(lvlsolved),6))
+        oraclereward.append(round(np.mean(lvlepsr),6))
+        oraclerewardsem.append(round(sem(lvlepsr),6))
+        oraclesteps.append(round(np.mean(lvlsteps), 6))
+        oraclestepssem.append(round(sem(lvlsteps), 6))
+
+        print(f"Heuristic")
         lvlsolved = []
         lvlepsr = []
         lvlsteps = [] # num of expert steps
         for irepeat, puzzle in zip(range(nrepeats), puzzles):
           # print(f"irepeat {irepeat}")
-          _, sim = make_test_environment(puzzle_num_blocks=fixed_num_blocks, 
-                                compositional=compositional, 
-                                  compositional_type=compositional_type, compositional_holdout=compositional_holdout,
-                                test_puzzle=puzzle)
+          _, sim = make_test_environment(
+                                        puzzle_max_stacks=puzzle_max_stacks,
+                                        puzzle_max_blocks=puzzle_max_blocks,
+                                        stack_max_blocks=stack_max_blocks,
+                                        sparse_reward=sparse_reward,
+                                        evaluation=True,
+                                        eval_puzzle_num_blocks=fixed_num_blocks,
+                                        compositional=compositional, compositional_eval=compositional_eval,
+                                        compositional_type=compositional_type, compositional_holdout=compositional_holdout,
+                                        test_puzzle=puzzle,
+                                        )
           state, _ = sim.reset()
           epsr = 0
           expert_demo = bwutils.expert_demo_plan(sim)
@@ -652,22 +860,29 @@ def main(lvls, compositional, compositional_type, compositional_holdout,
         print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
                 \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})\
                 \n\tavg steps {round(np.mean(lvlsteps), 6)} (sem={round(sem(lvlsteps), 6)})")
-        expertsolved.append(round(np.mean(lvlsolved),6))
-        expertsolvedsem.append(round(sem(lvlsolved),6))
-        expertreward.append(round(np.mean(lvlepsr),6))
-        expertrewardsem.append(round(sem(lvlepsr),6))
-        expertsteps.append(round(np.mean(lvlsteps), 6))
-        expertstepssem.append(round(sem(lvlsteps), 6))
+        heuristicsolved.append(round(np.mean(lvlsolved),6))
+        heuristicsolvedsem.append(round(sem(lvlsolved),6))
+        heuristicreward.append(round(np.mean(lvlepsr),6))
+        heuristicrewardsem.append(round(sem(lvlepsr),6))
+        heuristicsteps.append(round(np.mean(lvlsteps), 6))
+        heuristicstepssem.append(round(sem(lvlsteps), 6))
 
         print(f"Random")
         lvlsolved = []
         lvlepsr = []
         lvlsteps = [] # num of steps to solve
         for irepeat, puzzle in zip(range(nrepeats), puzzles):
-          _, sim = make_test_environment(puzzle_num_blocks=fixed_num_blocks, 
-                                compositional=compositional, 
-                                  compositional_type=compositional_type, compositional_holdout=compositional_holdout,
-                                test_puzzle=puzzle)
+          _, sim = make_test_environment(
+                                        puzzle_max_stacks=puzzle_max_stacks,
+                                        puzzle_max_blocks=puzzle_max_blocks,
+                                        stack_max_blocks=stack_max_blocks,
+                                        sparse_reward=sparse_reward,
+                                        evaluation=True,
+                                        eval_puzzle_num_blocks=fixed_num_blocks,
+                                        compositional=compositional, compositional_eval=compositional_eval,
+                                        compositional_type=compositional_type, compositional_holdout=compositional_holdout,
+                                        test_puzzle=puzzle,
+                                        )
           state, _ = sim.reset()
           epsr = 0
           ends = False
@@ -698,17 +913,18 @@ def main(lvls, compositional, compositional_type, compositional_holdout,
         randomstepssem.append(round(sem(lvlsteps, nan_policy="omit"), 6))
 
       print(f"modelsolved={modelsolved}\nmodelsolvedsem={modelsolvedsem}\
-          \nexpertsolved={expertsolved}\nexpertsolvedsem={expertsolvedsem}\
+          \noraclesolved={oraclesolved}\noraclesolvedsem={oraclesolvedsem}\
+          \nheuristicsolved={heuristicsolved}\nheuristicsolvedsem={heuristicsolvedsem}\
           \nrandomsolved={randomsolved}\nrandomsolvedsem={randomsolvedsem}\
           \nmodelsteps={modelsteps}\nmodelstepssem={modelstepssem}\
-          \nexpertsteps={expertsteps}\nexpertstepssem={expertstepssem}\
+          \noraclesteps={oraclesteps}\noraclestepssem={oraclestepssem}\
+          \nheuristicsteps={heuristicsteps}\nheuristicstepssem={heuristicstepssem}\
           \nrandomsteps={randomsteps}\nrandomstepssem={randomstepssem}")
 
 
 '''
 salloc -p test -t 0-01:00 --mem=200000 
 
-salloc -p gpu_test -t 0-01:00 --mem=8000 --gres=gpu:1
 module load python/3.10.12-fasrc01
 mamba activate neurorl
 '''
@@ -716,38 +932,75 @@ mamba activate neurorl
 if __name__ == "__main__":
   random.seed(0)
   main(
-        # lvls=[2,3,4,5], 
-        lvls=[],
-        compositional=False, 
-            compositional_type='newblock', compositional_holdout=[2,3,5,7],
-        groupname='muz4+8v-2', 
-        eval_test_puzzles=False, 
-        eval_num_stacks=True, fixed_num_blocks=4,
-        nrepeats=200,
+        eval_lvls=True, # whether to eval on varying num blocks
+        lvls=[2,3,4,5,6], # num blocks to eval
+        puzzle_max_stacks=1,
+        puzzle_max_blocks=11,
+        stack_max_blocks=7, 
+        sparse_reward=True, # whether the training is sparse reward
+        compositional=True, # whether the training setting is compositional
+        compositional_eval=False, # whether to eval on comp holdout
+        compositional_type='newblock', 
+        compositional_holdout=[2,3,5,7],
+        eval_test_puzzles=False, # whether to eval on 100 jBrain puzzles
+        eval_num_stacks=False, # whether to vary num stacks
+        fixed_num_blocks=4, # fixing num blocks while varying num stacks
+        nrepeats=30,
+        groupname='Msparse4~10comp-2v8max1-11-7', 
       )
 
 '''
-'Mu4~10comp5v8max1-7-7'
+'Msparse4~10comp-2v8max1-11-7'
   stack_max_blocks: 7, 
-  puzzle_max_blocks: 7,
+  puzzle_max_blocks: 11,
   puzzle_max_stacks: 1,
   curriculum: 4~10 (no leak),
   up_threshold: 0.8,
-  down_threshold: 0.5,
+  down_threshold: -2,
   compositional: True,
   compositional_type: 'newblock',
   compositional_holdout: [2,3,5,7],
+  sparse_reward: True,
 
-'Mu4~10comp5v8max2-10-7'
+'Mu4~10comp5v8max2-11-7'
   stack_max_blocks: 7, 
-  puzzle_max_blocks: 10,
+  puzzle_max_blocks: 11,
   puzzle_max_stacks: 2,
   curriculum: 4~10 (no leak),
   up_threshold: 0.8,
-  down_threshold: 0.5,
+  down_threshold: -2,
   compositional: True,
   compositional_type: 'newblock',
   compositional_holdout: [2,3,5,7],
+  sparse_reward: False,
+
+'Mu4~10comp5v8max1-11-7'
+  stack_max_blocks: 7, 
+  puzzle_max_blocks: 11,
+  puzzle_max_stacks: 1,
+  curriculum: 4~10 (no leak),
+  up_threshold: 0.8,
+  down_threshold: -2,
+  compositional: True,
+  compositional_type: 'newblock',
+  compositional_holdout: [2,3,5,7],
+  sparse_reward: False,
+modelsolved=[1.0, 0.86, 0.8, 0.66, 0.0, 0.0]
+modelsolvedsem=[0.0, 0.04957, 0.057143, 0.067673, 0.0, 0.0]          
+oraclesolved=[1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+oraclesolvedsem=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]          
+heuristicsolved=[1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+heuristicsolvedsem=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]          
+randomsolved=[0.04, 0.02, 0.0, 0.0, 0.0, 0.0]
+randomsolvedsem=[0.027994, 0.02, 0.0, 0.0, 0.0, 0.0]          
+modelsteps=[7.0, 10.348837, 15.55, 21.363636, nan, nan]
+modelstepssem=[0.0, 0.255361, 0.517576, 0.721449, nan, nan]          
+oraclesteps=[7.0, 10.52, 14.98, 20.06, 26.16, 33.66]
+oraclestepssem=[0.0, 0.246179, 0.436582, 0.431807, 0.680552, 0.588745]          
+heuristicsteps=[7.0, 11.54, 16.62, 21.64, 28.7, 35.48]
+heuristicstepssem=[0.0, 0.149038, 0.213599, 0.296593, 0.321032, 0.432591]          
+randomsteps=[157.5, 192.0, nan, nan, nan, nan]
+randomstepssem=[14.5, nan, nan, nan, nan, nan]
 
 'muz4+8v-2'
   stack_max_blocks: 7, 
@@ -757,6 +1010,7 @@ if __name__ == "__main__":
   up_threshold: 0.8,
   down_threshold: -2,
   compositional: False,
+  sparse_reward: False,
 
 'muz2~10long5v8'
   stack_max_blocks: 7, 
@@ -766,5 +1020,6 @@ if __name__ == "__main__":
   up_threshold: 0.8,
   down_threshold: 0.5,
   compositional: False,
+  sparse_reward: False,
 
 '''
