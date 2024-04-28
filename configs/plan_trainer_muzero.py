@@ -1,6 +1,6 @@
 '''
 // interactive session
-salloc -p gpu_test -t 0-01:00 --mem=8000 --gres=gpu:1
+salloc -p gpu_test -t 0-01:00 --mem=80000 --gres=gpu:1
 module load python/3.10.12-fasrc01
 mamba activate neurorl
 
@@ -717,7 +717,7 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['Msparse4~10comp-2v8max2-11-7']),
+            "group": tune.grid_search(['muz4+8v-2']),
             "num_steps": tune.grid_search([500e6]),
 
             "samples_per_insert": tune.grid_search([20.0]),

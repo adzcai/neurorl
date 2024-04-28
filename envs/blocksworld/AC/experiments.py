@@ -45,7 +45,7 @@ def parse_recall_performance(maxlen, puzzle_max_blocks, neans=[1e4], nrepeats=1)
 			ac_acc = []
 			synth_acc = []
 			for irepeat in range(nrepeats):
-				bb = BlocksBrain(blocks_number=puzzle_max_blocks, other_areas=oa, p=0.1, eak=int(np.sqrt(nean)), nean=nean, neak=int(np.sqrt(nean)), db=0.2)	
+				bb = BlocksBrain(blocks_number=puzzle_max_blocks, other_areas=oa, p=0.1, eak=50, nean=nean, neak=50, db=0.1)	
 				parse(bb, stacks=stacks, prefix=prefix)
 				r = readout(bb, stacks_number=len(stacks), stacks_lengths=[nitems], top_areas=[0], prefix=prefix)
 				ac_acc.append(_ratio_matched(r[0], stacks[0]))
@@ -82,7 +82,7 @@ def _ratio_matched(stack, target):
 
 
 '''
-salloc -p test -t 0-01:00 --mem=600000 
+salloc -p test -t 0-06:00 --mem=1000000 
 module load python/3.10.12-fasrc01
 mamba activate neurorl
 '''
@@ -90,8 +90,8 @@ mamba activate neurorl
 if __name__ == "__main__":
 	random.seed(0)
 	parse_recall_performance(
-							maxlen=9,
-							puzzle_max_blocks=20,
-							neans=[1e3,1e4,1e5],
-							nrepeats=3,
+							maxlen=20,
+							puzzle_max_blocks=35,
+							neans=[1e4,1e5,5e5,1e6],
+							nrepeats=5,
 							)

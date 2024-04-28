@@ -202,6 +202,7 @@ def main(
         groupname, searchname='initial', 
         eval_test_puzzles=False,
         eval_num_stacks=False, fixed_num_blocks=None,
+        eval_steps=False, max_oracle_steps=40, nsamples=30,
         nrepeats=100,
         ):
     '''
@@ -286,32 +287,31 @@ def main(
     muzerotrainer.observation_encoder = lambda inputs, num_actions: tmp_obs_encoder(inputs=inputs,num_actions=num_actions)
 
 
-    modelsolved = [] # ratio of puzzles solved
-    modelsolvedsem = [] 
-    oraclesolved = []
-    oraclesolvedsem = []
-    heuristicsolved = []
-    heuristicsolvedsem = []
-    randomsolved = []
-    randomsolvedsem = []
-    modelreward = [] # avg episode reward
-    modelrewardsem = []
-    oraclereward = []
-    oraclerewardsem = []
-    heuristicreward = []
-    heuristicrewardsem = []
-    randomreward = []
-    randomrewardsem = []
-    modelsteps = [] # num of steps for solving a puzzle 
-    modelstepssem = []
-    oraclesteps = []
-    oraclestepssem = []
-    heuristicsteps = [] # num of steps for solving a puzzle
-    heuristicstepssem = []
-    randomsteps = [] # num of steps for solving a puzzle
-    randomstepssem = []
-
     if eval_lvls and len(lvls)>0:
+      modelsolved = [] # ratio of puzzles solved
+      modelsolvedsem = [] 
+      oraclesolved = []
+      oraclesolvedsem = []
+      heuristicsolved = []
+      heuristicsolvedsem = []
+      randomsolved = []
+      randomsolvedsem = []
+      modelreward = [] # avg episode reward
+      modelrewardsem = []
+      oraclereward = []
+      oraclerewardsem = []
+      heuristicreward = []
+      heuristicrewardsem = []
+      randomreward = []
+      randomrewardsem = []
+      modelsteps = [] # num of steps for solving a puzzle 
+      modelstepssem = []
+      oraclesteps = []
+      oraclestepssem = []
+      heuristicsteps = [] # num of steps for solving a puzzle
+      heuristicstepssem = []
+      randomsteps = [] # num of steps for solving a puzzle
+      randomstepssem = []
       for lvl in lvls:
         env, sim = make_test_environment(
                                         puzzle_max_stacks=puzzle_max_stacks,
@@ -661,8 +661,8 @@ def main(
                                                               curriculum=False, leak=False,
                                                               compositional=compositional, 
                                                               compositional_eval=compositional_eval, 
-                                                                compositional_type=compositional_type, 
-                                                                compositional_holdout=compositional_holdout,)
+                                                              compositional_type=compositional_type, 
+                                                              compositional_holdout=compositional_holdout,)
                                       
           assert nb == fixed_num_blocks
           if len(input_stacks)==nstacks or len(goal_stacks)==nstacks:
@@ -922,7 +922,243 @@ def main(
           \nrandomsteps={randomsteps}\nrandomstepssem={randomstepssem}")
 
 
+    if eval_steps and lvls!=None:
+      modelsolved = [np.nan]*max_oracle_steps # ratio of puzzles solved
+      modelsolvedsem = [np.nan]*max_oracle_steps
+      oraclesolved = [np.nan]*max_oracle_steps
+      oraclesolvedsem = [np.nan]*max_oracle_steps
+      heuristicsolved = [np.nan]*max_oracle_steps
+      heuristicsolvedsem = [np.nan]*max_oracle_steps
+      randomsolved = [np.nan]*max_oracle_steps
+      randomsolvedsem = [np.nan]*max_oracle_steps
+      modelreward = [np.nan]*max_oracle_steps # avg episode reward
+      modelrewardsem = [np.nan]*max_oracle_steps
+      oraclereward = [np.nan]*max_oracle_steps
+      oraclerewardsem = [np.nan]*max_oracle_steps
+      heuristicreward = [np.nan]*max_oracle_steps
+      heuristicrewardsem = [np.nan]*max_oracle_steps
+      randomreward = [np.nan]*max_oracle_steps
+      randomrewardsem = [np.nan]*max_oracle_steps
+      modelsteps = [np.nan]*max_oracle_steps # num of steps for solving a puzzle 
+      modelstepssem = [np.nan]*max_oracle_steps
+      oraclesteps = [np.nan]*max_oracle_steps
+      oraclestepssem = [np.nan]*max_oracle_steps
+      heuristicsteps = [np.nan]*max_oracle_steps # num of steps for solving a puzzle
+      heuristicstepssem = [np.nan]*max_oracle_steps
+      randomsteps = [np.nan]*max_oracle_steps # num of steps for solving a puzzle
+      randomstepssem = [np.nan]*max_oracle_steps
+      for irepeat in range(nsamples):
+        # sample a random puzzle
+        nb, input_stacks, goal_stacks = bwutils.sample_random_puzzle(puzzle_max_stacks=puzzle_max_stacks, 
+                                                              puzzle_max_blocks=puzzle_max_blocks, 
+                                                              stack_max_blocks=stack_max_blocks,
+                                                              puzzle_num_blocks=random.choice(lvls), 
+                                                              curriculum=False, leak=False,
+                                                              compositional=compositional, 
+                                                              compositional_eval=compositional_eval, 
+                                                              compositional_type=compositional_type, 
+                                                              compositional_holdout=compositional_holdout,)
+        test_puzzle = [input_stacks, goal_stacks]
+        env, sim = make_test_environment(
+                                        puzzle_max_stacks=puzzle_max_stacks,
+                                        puzzle_max_blocks=puzzle_max_blocks,
+                                        stack_max_blocks=stack_max_blocks,
+                                        sparse_reward=sparse_reward,
+                                        evaluation=True,
+                                        eval_puzzle_num_blocks=None,
+                                        compositional=compositional, compositional_eval=compositional_eval,
+                                        compositional_type=compositional_type, compositional_holdout=compositional_holdout,
+                                        test_puzzle=test_puzzle,
+                                        )
+        oracle_demo = bwutils.oracle_demo_plan(sim)
+        oraclensteps = len(oracle_demo)
+        print(f"oraclensteps {oraclensteps}")
+
+        mcts_policy = functools.partial(
+          mctx.gumbel_muzero_policy,
+          max_depth=config.max_sim_depth,
+          num_simulations=config.num_simulations,
+          gumbel_scale=config.gumbel_scale)
+        discretizer = utils.Discretizer(
+                      num_bins=config.num_bins,
+                      max_value=config.max_scalar_value,
+                      tx_pair=config.tx_pair,
+                  )
+        builder = basics.Builder(
+          config=config,
+          get_actor_core_fn=functools.partial(
+              muzero.get_actor_core,
+              evaluation=True,
+              mcts_policy=mcts_policy,
+              discretizer=discretizer,
+          ),
+          ActorCls=functools.partial(
+            basics.BasicActor,
+            observers=[muzerotrainer.MuObserver(period=100000)],
+            ),
+          optimizer_cnstr=muzero.muzero_optimizer_constr,
+          LossFn=muzero.MuZeroLossFn(
+              discount=config.discount,
+              importance_sampling_exponent=config.importance_sampling_exponent,
+              burn_in_length=config.burn_in_length,
+              max_replay_size=config.max_replay_size,
+              max_priority_weight=config.max_priority_weight,
+              bootstrap_n=config.bootstrap_n,
+              discretizer=discretizer,
+              mcts_policy=mcts_policy,
+              simulation_steps=config.simulation_steps,
+              reanalyze_ratio=0.25, 
+              root_policy_coef=config.root_policy_coef,
+              root_value_coef=config.root_value_coef,
+              model_policy_coef=config.model_policy_coef,
+              model_value_coef=config.model_value_coef,
+              model_reward_coef=config.model_reward_coef,
+          ))
+        network_factory = functools.partial(muzerotrainer.make_muzero_networks, config=config)
+        load_outputs = load_agent(
+          env=env,
+          config=config,
+          builder=builder,
+          network_factory=network_factory,
+          seed_path=seed_path,
+          use_latest=True,
+          evaluation=True)
+        action_dict = bwcfg.configurations['plan']['action_dict']
+
+        # print(f"Muzero {groupname}")
+        lvlsolved = [] if np.isnan(modelsolved[oraclensteps]).all() else modelsolved[oraclensteps]
+        lvlsteps = [] if np.isnan(modelsteps[oraclensteps]).all() else modelsteps[oraclensteps]
+        lvlepsr = [] if np.isnan(modelreward[oraclensteps]).all() else modelreward[oraclensteps]
+        reload(load_outputs.checkpointer, seed_path)
+        actor = load_outputs.actor
+        timestep = env.reset()
+        actor.observe_first(timestep)
+        ends = False
+        t = 0
+        epsr = 0
+        while not ends:
+          action = actor.select_action(timestep.observation)
+          timestep = env.step(action)
+          steptype = timestep.step_type
+          r = timestep.reward
+          state = timestep.observation[0]
+          t += 1 # increment time step
+          epsr += r # episode cumulative reward
+          if steptype==2: # if final timestep
+            ends = True
+            if (t<bwcfg.configurations['plan']['max_steps']-1) or (epsr>0.85):
+              lvlsolved.append(1) # terminates early or solved at max step
+              lvlsteps.append(t)
+            else:
+              lvlsolved.append(0)
+        lvlepsr.append(epsr)
+        if len(lvlsteps)==0:
+          lvlsteps=np.nan
+        modelsolved[oraclensteps] = lvlsolved
+        modelreward[oraclensteps] = lvlepsr
+        modelsteps[oraclensteps] = lvlsteps
+
+        # print(f"Oracle")
+        lvlsolved = [] if np.isnan(oraclesolved[oraclensteps]).all() else oraclesolved[oraclensteps]
+        lvlsteps = [] if np.isnan(oraclesteps[oraclensteps]).all() else oraclesteps[oraclensteps]
+        lvlepsr = [] if np.isnan(oraclereward[oraclensteps]).all() else oraclereward[oraclensteps]
+        state, _ = sim.reset()
+        epsr = 0
+        expert_demo = bwutils.oracle_demo_plan(sim)
+        for t, a in enumerate(expert_demo):
+          state, r, terminated, truncated, _ = sim.step(a)
+          epsr += r # episode cumulative reward
+        lvlepsr.append(epsr)
+        lvlsolved.append(1)
+        lvlsteps.append(len(expert_demo))
+        oraclesolved[oraclensteps] = lvlsolved
+        oraclereward[oraclensteps] = lvlepsr
+        oraclesteps[oraclensteps] = lvlsteps
+
+        # print(f"Heuristic")
+        lvlsolved = [] if np.isnan(heuristicsolved[oraclensteps]).all() else heuristicsolved[oraclensteps]
+        lvlsteps = [] if np.isnan(heuristicsteps[oraclensteps]).all() else heuristicsteps[oraclensteps]
+        lvlepsr = [] if np.isnan(heuristicreward[oraclensteps]).all() else heuristicreward[oraclensteps]
+        state, _ = sim.reset()
+        epsr = 0
+        expert_demo = bwutils.expert_demo_plan(sim)
+        for t, a in enumerate(expert_demo):
+          state, r, terminated, truncated, _ = sim.step(a)
+          epsr += r # episode cumulative reward
+        lvlepsr.append(epsr)
+        lvlsolved.append(1)
+        lvlsteps.append(len(expert_demo))
+        heuristicsolved[oraclensteps] = lvlsolved
+        heuristicreward[oraclensteps] = lvlepsr
+        heuristicsteps[oraclensteps] = lvlsteps
+
+        # print(f"Random")
+        lvlsolved = [] if np.isnan(randomsolved[oraclensteps]).all() else randomsolved[oraclensteps]
+        lvlsteps = [] if np.isnan(randomsteps[oraclensteps]).all() else randomsteps[oraclensteps]
+        lvlepsr = [] if np.isnan(randomreward[oraclensteps]).all() else randomreward[oraclensteps]
+        state, _ = sim.reset()
+        epsr = 0
+        ends = False
+        t=0
+        while not ends:
+          t+=1
+          a = random.choice(range(sim.num_actions))
+          state, r, terminated, truncated, _ = sim.step(a)
+          epsr += r # episode cumulative reward
+          if terminated:
+            ends = True
+            lvlsolved.append(1)
+            lvlsteps.append(t)
+          elif truncated:
+            ends=True
+            lvlsolved.append(0)
+        lvlepsr.append(epsr)
+        if len(lvlsteps)==0:
+          lvlsteps=np.nan
+        randomsolved[oraclensteps] = lvlsolved
+        randomreward[oraclensteps] = lvlepsr
+        randomsteps[oraclensteps] = lvlsteps
+
+      for oraclensteps in range(max_oracle_steps):
+        modelsolvedsem[oraclensteps] = round(sem(modelsolved[oraclensteps]),6)
+        modelsolved[oraclensteps] = round(np.mean(modelsolved[oraclensteps]),6)
+        modelrewardsem[oraclensteps] = round(sem(modelreward[oraclensteps]),6)
+        modelreward[oraclensteps] = round(np.mean(modelreward[oraclensteps]),6)
+        modelstepssem[oraclensteps] = round(sem(modelsteps[oraclensteps], nan_policy="omit"), 6)
+        modelsteps[oraclensteps] = round(np.nanmean(modelsteps[oraclensteps]), 6)
+
+        oraclesolvedsem[oraclensteps] = round(sem(oraclesolved[oraclensteps]),6)
+        oraclesolved[oraclensteps] = round(np.mean(oraclesolved[oraclensteps]),6)
+        oraclerewardsem[oraclensteps] = round(sem(oraclereward[oraclensteps]),6)
+        oraclereward[oraclensteps] = round(np.mean(oraclereward[oraclensteps]),6)
+        oraclestepssem[oraclensteps] = round(sem(oraclesteps[oraclensteps]), 6)
+        oraclesteps[oraclensteps] = round(np.mean(oraclesteps[oraclensteps]), 6)
+        
+        heuristicsolvedsem[oraclensteps] = round(sem(heuristicsolved[oraclensteps]),6)
+        heuristicsolved[oraclensteps] = round(np.mean(heuristicsolved[oraclensteps]),6)
+        heuristicrewardsem[oraclensteps] = round(sem(heuristicreward[oraclensteps]),6)
+        heuristicreward[oraclensteps] = round(np.mean(heuristicreward[oraclensteps]),6)
+        heuristicstepssem[oraclensteps] = round(sem(heuristicsteps[oraclensteps]), 6)
+        heuristicsteps[oraclensteps] = round(np.mean(heuristicsteps[oraclensteps]), 6)
+
+        randomsolvedsem[oraclensteps] = round(sem(randomsolved[oraclensteps]),6)
+        randomsolved[oraclensteps] = round(np.mean(randomsolved[oraclensteps]),6)
+        randomrewardsem[oraclensteps] = round(sem(randomreward[oraclensteps]),6)
+        randomreward[oraclensteps] = round(np.mean(randomreward[oraclensteps]),6)
+        randomstepssem[oraclensteps] = round(sem(randomsteps[oraclensteps], nan_policy="omit"), 6)
+        randomsteps[oraclensteps] = round(np.nanmean(randomsteps[oraclensteps]), 6)
+
+      print(f"modelsolved={modelsolved}\nmodelsolvedsem={modelsolvedsem}\
+          \nrandomsolved={randomsolved}\nrandomsolvedsem={randomsolvedsem}\
+          \nmodelsteps={modelsteps}\nmodelstepssem={modelstepssem}\
+          \noraclesteps={oraclesteps}\noraclestepssem={oraclestepssem}\
+          \nheuristicsteps={heuristicsteps}\nheuristicstepssem={heuristicstepssem}\
+          \nrandomsteps={randomsteps}\nrandomstepssem={randomstepssem}")
+
+
 '''
+salloc -p gpu_test -t 0-03:00 --mem=80000 --gres=gpu:1
+
 salloc -p test -t 0-01:00 --mem=200000 
 
 module load python/3.10.12-fasrc01
@@ -932,21 +1168,22 @@ mamba activate neurorl
 if __name__ == "__main__":
   random.seed(0)
   main(
-        eval_lvls=True, # whether to eval on varying num blocks
+        eval_lvls=False, # whether to eval on varying num blocks
         lvls=[2,3,4,5,6], # num blocks to eval
-        puzzle_max_stacks=1,
-        puzzle_max_blocks=11,
+        puzzle_max_stacks=5,
+        puzzle_max_blocks=10,
         stack_max_blocks=7, 
-        sparse_reward=True, # whether the training is sparse reward
-        compositional=True, # whether the training setting is compositional
+        sparse_reward=False, # whether the training is sparse reward
+        compositional=False, # whether the training setting is compositional
         compositional_eval=False, # whether to eval on comp holdout
         compositional_type='newblock', 
         compositional_holdout=[2,3,5,7],
         eval_test_puzzles=False, # whether to eval on 100 jBrain puzzles
         eval_num_stacks=False, # whether to vary num stacks
         fixed_num_blocks=4, # fixing num blocks while varying num stacks
-        nrepeats=30,
-        groupname='Msparse4~10comp-2v8max1-11-7', 
+        eval_steps=True, max_oracle_steps=40, nsamples=500,
+        nrepeats=20,
+        groupname='muz4+8v-2', 
       )
 
 '''
