@@ -499,7 +499,8 @@ def setup_experiment_inputs(
           mcts_policy=mcts_policy,
           simulation_steps=config.simulation_steps,
           #reanalyze_ratio=config.reanalyze_ratio,
-          reanalyze_ratio=0.25, # how frequently to tune value loss wrt tree node values (faster but less accurate)
+          # reanalyze_ratio=0.25, # how frequently to tune value loss wrt tree node values (faster but less accurate)
+          reanalyze_ratio=0.1,
           root_policy_coef=config.root_policy_coef,
           root_value_coef=config.root_value_coef,
           model_policy_coef=config.model_policy_coef,
@@ -717,7 +718,7 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['muz4+8v-2']),
+            "group": tune.grid_search(['Msparse4~10-2v8max5-10-7']),
             "num_steps": tune.grid_search([500e6]),
 
             "samples_per_insert": tune.grid_search([20.0]),

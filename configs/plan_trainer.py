@@ -641,7 +641,7 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['Qsparse3~10comp-2v8max1-11-7']),
+            "group": tune.grid_search(['Qsparse3~10-2v8max5-10-7']),
             "num_steps": tune.grid_search([500e6]),
 
             "samples_per_insert": tune.grid_search([20.0]),

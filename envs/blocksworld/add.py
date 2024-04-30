@@ -26,6 +26,7 @@ class Simulator(parse.Simulator):
 		super().__init__(max_steps = max_steps,
 						action_cost = action_cost,
 						reward_decay_factor = reward_decay_factor,
+						puzzle_max_blocks = 10, # TODO
 						verbose = verbose)
 		self.maxnprocesses = maxnprocesses
 		assert cfg['cfg'] == 'add', f"cfg is {cfg['cfg']}"

@@ -64,10 +64,10 @@ from envs.blocksworld import parse
 from envs.blocksworld.cfg import configurations 
 
 obsfreq = 5000 # frequency to call observer
-plotfreq = 20000 # frequency to plot action trajectory
+plotfreq = 50000 # frequency to plot action trajectory
 UP_PRESSURE_THRESHOLD = 5 # pressure threshold to increase curriculum
 DOWN_PRESSURE_THRESHOLD = 10 # pressure threshold to decrease curriculum
-UP_REWARD_THRESHOLD = 0.9 # upper reward threshold for incrementing up pressure
+UP_REWARD_THRESHOLD = 0.8 # upper reward threshold for incrementing up pressure
 DOWN_REWARD_THRESHOLD = 0.5 # lower reward threshold for incrementing down pressure
 up_pressure = 0 # initial up pressure
 down_pressure = 0 # initial down pressure
@@ -672,7 +672,7 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['.95palong']),
+            "group": tune.grid_search(['pa1~105v8max10-7']),
             "num_steps": tune.grid_search([500e6]),
 
             "samples_per_insert": tune.grid_search([20.0]),

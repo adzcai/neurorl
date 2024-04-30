@@ -1,0 +1,14 @@
+Traceback (most recent call last):
+  File "/n/home04/yichenli/human-sf/envs/blocksworld/AC/experiments.py", line 117, in <module>
+    parse_recall_performance(
+  File "/n/home04/yichenli/human-sf/envs/blocksworld/AC/experiments.py", line 76, in parse_recall_performance
+    sr = sb.parse(stacks[0])
+  File "/n/home04/yichenli/human-sf/envs/blocksworld/AC/experiments.py", line 17, in parse
+    self.reset(shuffle=False, difficulty_mode=self.num_blocks, cur_curriculum_level=None)
+  File "/n/home04/yichenli/human-sf/envs/blocksworld/parse.py", line 128, in reset
+    self.num_blocks, self.goal = self.__create_episode(shuffle=shuffle, difficulty_mode=difficulty_mode, cur_curriculum_level=cur_curriculum_level)
+  File "/n/home04/yichenli/human-sf/envs/blocksworld/parse.py", line 87, in __create_episode
+    stack = random.sample(list(range(self.puzzle_max_blocks)), num_blocks) # the actual blocks in the stack
+  File "/n/home04/yichenli/.conda/envs/neurorl/lib/python3.9/random.py", line 449, in sample
+    raise ValueError("Sample larger than population or is negative")
+ValueError: Sample larger than population or is negative
