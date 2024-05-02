@@ -37,7 +37,7 @@ class Simulator():
 				area_status = cfg['area_status'],
 				verbose=False):
 		self.all_areas, self.head, self.node_areas, self.relocated_area, self.blocks_area = utils.init_simulator_areas()
-		self.puzzle_max_blocks = 10 # TODO puzzle_max_blocks
+		self.puzzle_max_blocks = puzzle_max_blocks
 		self.stack_max_blocks = stack_max_blocks
 		self.max_steps = max_steps # max steps allowed in episode
 		self.action_cost = action_cost

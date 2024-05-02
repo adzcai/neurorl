@@ -1,3 +1,16 @@
+'''
+env for parse language
+
+salloc -p gpu_test -t 0-03:00 --mem=80000 --gres=gpu:1
+
+salloc -p test -t 0-01:00 --mem=200000 
+
+module load python/3.10.12-fasrc01
+mamba activate neurorl
+
+python envs/language/langenv.py
+
+'''
 import random
 import pptree
 import copy
@@ -14,8 +27,15 @@ PREP = "PREP"
 PREP_P = "PREP_P"
 ADJ = "ADJ"
 ADVERB = "ADVERB"
-AREAS = [LEX, DET, SUBJ, OBJ, VERB, ADJ, ADVERB, PREP, PREP_P]
-# AREAS = [LEX, DET, SUBJ, OBJ, VERB]
+
+ROOT = 'ROOT'
+SUBJ_P = 'SUBJ_P'
+VERB_P = 'VERB_P'
+OBJ_P = 'OBJ_P'
+NOUN = 'NOUN'
+
+# AREAS = [LEX, DET, SUBJ, OBJ, VERB, ADJ, ADVERB, PREP, PREP_P]
+AREAS = [LEX, DET, SUBJ, OBJ, VERB, ADJ, ADVERB, PREP, PREP_P, SUBJ_P, OBJ_P, NOUN, ROOT, VERB_P]
 FIBERS = [(LEX, DET), 
 			(LEX, SUBJ),
 			(LEX, OBJ),
@@ -44,18 +64,17 @@ FIBERS = [(LEX, DET),
 			(VERB, ADJ),
 			(VERB, ADVERB),
 			(VERB, PREP_P),
-
 ]
 # all lexicon and their types
 LEXEME_DICT = {
 		'det': ['the', 'a'], 
-		'noun': ['dogs', 'cats', 'mice', 'people', 'man', 'woman'], 
+		'noun': ['dogs', 'cats', 'mice', 'people', 'man', 'woman', 'book', 'glasses'], 
 		'transverb': ['chase', 'love', 'bite', 'saw'], 
-		'prep': ['of', 'in'], 
-		'adj': ['big', 'bad'], 
-		'intransverb': ['run', 'fly'], 
-		'adv': ['quickly'], 
-		'copula': ['are'],
+		'prep': ['with', 'over'], 
+		'adj': ['big', 'bad', 'cute', 'curious'], 
+		'intransverb': ['run', 'fly', 'roll'], 
+		'adv': ['quickly', 'slowly', 'slightly'], 
+		# 'copula': ['are'],
 		}
 ALL_WORDS = [w for l in LEXEME_DICT.values() for w in l]
 # readout methods
@@ -74,9 +93,73 @@ ENGLISH_READOUT_RULES = {
 		LEX: [],
 	}
 
+CFG = {
+		ROOT: [SUBJ_P, VERB_P],
+		VERB_P: [VERB, OBJ_P, PREP_P, ADVERB],
+		SUBJ_P: [SUBJ], # [SUBJ, PREP_P],
+		SUBJ: [DET, ADJ, NOUN],
+		PREP_P: [PREP, DET, NOUN],
+		OBJ_P: [OBJ], # [OBJ, PREP_P],
+		OBJ: [DET, ADJ, NOUN],
+		ADVERB: [LEX], # basetype
+		VERB: [LEX],
+		NOUN: [LEX],
+		DET: [LEX],
+		ADJ: [LEX],
+		PREP: [LEX],
+		}
+baseareas = [ADVERB, VERB, NOUN, DET, ADJ, PREP]
+FIBERS = [(a1, a2) for a1 in CFG.keys() for a2 in CFG[a1]] # + [(a1, a2) for a1 in baseareas for a2 in baseareas if a1!=a2]
+
+def output_format(cfg=CFG):
+	outformat = []
+	for component in cfg[ROOT]:
+		stack = [component]
+		while len(stack)>0: # DFS
+			basetype = stack.pop(-1)
+			if cfg[basetype]!=[LEX]:
+				for bt in cfg[basetype][::-1]:
+					stack.append(bt)
+			else:
+				outformat += [basetype]
+	return outformat
+OUTPUT_FORMAT = output_format(CFG)
+print(OUTPUT_FORMAT)
+
+def synthetic_readout(simulator, cfg=CFG):
+	assembly_dict = copy.deepcopy(simulator.assembly_dict)
+	last_active_assembly = copy.deepcopy(simulator.last_active_assembly)
+	decoded = []
+	for component in cfg[ROOT]:
+		stack = [component]
+		while len(stack)>0: # DFS
+			basetype = stack.pop(-1)
+			assembly_dict, last_active_assembly, stimulate_success = stimulate(source=basetype, 
+																			destinations=cfg[basetype], 
+																			assembly_dict=assembly_dict, 
+																			last_active_assembly=last_active_assembly)
+			if cfg[basetype]!=[LEX]:
+				for bt in cfg[basetype][::-1]:
+					stack.append(bt)
+			else:
+				wordid = last_active_assembly[LEX] if stimulate_success else -1
+				decoded += [wordid]
+	assert len(decoded)==len(OUTPUT_FORMAT)
+	print(decoded)
+	return decoded
+
+def translate(wordids, wordlist=ALL_WORDS):
+	words = []
+	for wid in wordids:
+		if wid==-1:
+			words.append("")
+		else:
+			words.append(wordlist[wid])
+	return words
+	
 
 def init_simulator_areas():
-	return AREAS, LEX, DET, VERB, FIBERS
+	return AREAS, LEX, DET, FIBERS
 
 def get_action_idx(atuple, action_dict):
 	(aname, arg1, arg2) = atuple
@@ -95,6 +178,48 @@ def get_action_idxs(action_tuples, action_dict):
 	return idxs
 
 def parse_noun(action_dict):
+	action_tuples = [
+				[
+				("disinhibit_fiber", NOUN, LEX),
+				("disinhibit_area", NOUN, None),
+				],
+
+				[("project_star", None, None),],
+
+				[
+				("disinhibit_fiber", NOUN, SUBJ),
+				("disinhibit_fiber", NOUN, OBJ),
+				("disinhibit_fiber", NOUN, PREP_P),
+				("disinhibit_area", SUBJ, None),
+				("disinhibit_area", OBJ, None),
+				("disinhibit_area", PREP_P, None),
+				],
+				
+				[("project_star", None, None),],
+
+				[
+				("inhibit_fiber", NOUN, LEX), 
+				("inhibit_fiber", SUBJ, DET), 
+				("inhibit_fiber", SUBJ, ADJ), 
+				("inhibit_fiber", SUBJ, NOUN), 
+				("inhibit_fiber", OBJ, DET), 
+				("inhibit_fiber", OBJ, ADJ),
+				("inhibit_fiber", OBJ, NOUN), 
+				("inhibit_fiber", PREP_P, PREP), 
+				("inhibit_fiber", PREP_P, DET), 
+				("inhibit_fiber", PREP_P, NOUN), 
+				("inhibit_area", NOUN, None),
+				("inhibit_area", ADJ, None),
+				("inhibit_area", DET, None),
+				("inhibit_area", PREP, None),
+				("inhibit_area", PREP_P, None),
+				("inhibit_area", VERB, None),
+				("inhibit_area", ADVERB, None),
+				],
+			]
+	return get_action_idxs(action_tuples, action_dict)
+
+def old_parse_noun(action_dict):
 	# actions to parse a generic noun
 	action_tuples = [
 				[
@@ -145,7 +270,50 @@ def parse_noun(action_dict):
 				]
 	return get_action_idxs(action_tuples, action_dict)
 
+
 def parse_transverb(action_dict):
+	# actions to parse transitive verb
+	action_tuples = [
+				[
+				("disinhibit_fiber", LEX, VERB),
+				("disinhibit_fiber", VERB, VERB_P),
+				("disinhibit_fiber", VERB_P, ROOT),
+				("disinhibit_area", VERB, None),
+				("disinhibit_area", VERB_P, None),
+				("disinhibit_area", ROOT, None),
+				],
+
+				[("project_star", None, None),],
+
+				[
+				("disinhibit_fiber", ROOT, SUBJ_P),
+				("disinhibit_fiber", SUBJ_P, SUBJ),
+				("disinhibit_area", SUBJ_P, None),
+				("disinhibit_area", SUBJ, None),
+				],
+
+				[("project_star", None, None),],
+
+				[
+				("inhibit_fiber", ROOT, SUBJ_P),
+				("inhibit_fiber", SUBJ_P, SUBJ),
+				("inhibit_fiber", LEX, VERB),
+				("inhibit_area", SUBJ, None),
+				("inhibit_fiber", LEX, VERB),
+				("inhibit_fiber", VERB, VERB_P),
+				("inhibit_area", VERB, None),
+				
+				("disinhibit_fiber", VERB_P, OBJ_P),
+				("disinhibit_fiber", OBJ_P, OBJ),
+				("disinhibit_fiber", VERB_P, PREP_P),
+				("disinhibit_area", OBJ_P, None),
+				("disinhibit_area", PREP_P, None),
+				],
+			]
+	return get_action_idxs(action_tuples, action_dict)
+
+
+def old_parse_transverb(action_dict):
 	# actions to parse transitive verb
 	action_tuples = [
 				[
@@ -167,7 +335,7 @@ def parse_transverb(action_dict):
 				]
 	return get_action_idxs(action_tuples, action_dict)
 
-def parse_intransverb(action_dict):
+def old_parse_intransverb(action_dict):
 	action_tuples = [
 				[
 				("disinhibit_fiber", LEX, VERB),
@@ -187,6 +355,48 @@ def parse_intransverb(action_dict):
 				]
 	return get_action_idxs(action_tuples, action_dict)
 
+def parse_intransverb(action_dict):
+	action_tuples = [
+				[
+				("disinhibit_fiber", LEX, VERB),
+				("disinhibit_fiber", VERB, VERB_P),
+				("disinhibit_fiber", VERB_P, ROOT),
+				("disinhibit_area", VERB, None),
+				("disinhibit_area", VERB_P, None),
+				("disinhibit_area", ROOT, None),
+				],
+
+				[("project_star", None, None),],
+
+				[
+				("disinhibit_fiber", ROOT, SUBJ_P),
+				("disinhibit_fiber", SUBJ_P, SUBJ),
+				("disinhibit_area", SUBJ_P, None),
+				("disinhibit_area", SUBJ, None),
+				],
+
+				[("project_star", None, None),],
+
+				[
+				("inhibit_fiber", ROOT, SUBJ_P),
+				("inhibit_fiber", SUBJ_P, SUBJ),
+				("inhibit_fiber", LEX, VERB),
+				("inhibit_area", SUBJ, None),
+				("inhibit_fiber", LEX, VERB),
+				("inhibit_fiber", VERB, VERB_P),
+				("inhibit_area", VERB, None),
+				
+				("inhibit_fiber", VERB_P, OBJ_P),
+				("inhibit_fiber", OBJ_P, OBJ),
+				("disinhibit_fiber", VERB_P, PREP_P),
+				("inhibit_area", OBJ_P, None),
+				("inhibit_area", OBJ, None),
+				("disinhibit_area", PREP_P, None),
+				],
+			]
+	return get_action_idxs(action_tuples, action_dict)
+
+
 def parse_copula(action_dict):
 	action_tuples = [
 				[
@@ -205,7 +415,7 @@ def parse_copula(action_dict):
 				]
 	return get_action_idxs(action_tuples, action_dict)
 
-def parse_adverb(action_dict):
+def old_parse_adverb(action_dict):
 	action_tuples = [
 				[
 				("disinhibit_area", ADVERB, None), #
@@ -221,7 +431,36 @@ def parse_adverb(action_dict):
 				]
 	return get_action_idxs(action_tuples, action_dict)
 
-def parse_det(action_dict):
+def parse_adverb(action_dict):
+	action_tuples = [
+				[
+				("inhibit_fiber", LEX, DET),
+				("inhibit_fiber", LEX, ADJ),
+				("inhibit_fiber", LEX, NOUN),
+				("inhibit_fiber", LEX, VERB),
+				("inhibit_fiber", LEX, PREP),
+				("disinhibit_fiber", LEX, ADVERB),
+				("disinhibit_fiber", ADVERB, VERB_P),
+				("disinhibit_fiber", VERB_P, ROOT),
+				("disinhibit_area", ADVERB, None),
+				("disinhibit_area", VERB_P, None),
+				("disinhibit_area", ROOT, None),
+				],
+
+				[("project_star", None, None),],
+
+				[
+				("inhibit_fiber", ROOT, VERB_P),
+				("inhibit_fiber", VERB_P, ADVERB),
+				("inhibit_fiber", ADVERB, LEX),
+				("inhibit_area", VERB_P, None),
+				("inhibit_area", ADVERB, None),
+				("inhibit_area", ROOT, None),
+				],
+			]
+	return get_action_idxs(action_tuples, action_dict)
+
+def old_parse_det(action_dict):
 	action_tuples = [
 				[
 				("disinhibit_area", DET, None), #
@@ -237,7 +476,33 @@ def parse_det(action_dict):
 				]
 	return get_action_idxs(action_tuples, action_dict)
 
-def parse_adj(action_dict):
+def parse_det(action_dict):
+	action_tuples = [
+				[
+				("disinhibit_area", DET, None),
+				("disinhibit_area", SUBJ, None),
+				("disinhibit_area", OBJ, None),
+				("disinhibit_area", PREP_P, None),
+				("disinhibit_fiber", LEX, DET),
+				("disinhibit_fiber", DET, SUBJ),
+				("disinhibit_fiber", DET, OBJ),
+				("disinhibit_fiber", DET, PREP_P),
+				],
+
+				[("project_star", None, None),],
+
+				[
+				("inhibit_fiber", LEX, DET),
+				("disinhibit_fiber", SUBJ, ADJ),
+				("disinhibit_fiber", SUBJ, NOUN),
+				("disinhibit_fiber", OBJ, ADJ),
+				("disinhibit_fiber", OBJ, NOUN),
+				("disinhibit_fiber", PREP_P, NOUN),
+				],
+			]
+	return get_action_idxs(action_tuples, action_dict)
+
+def old_parse_adj(action_dict):
 	action_tuples = [
 				[
 				("disinhibit_area", ADJ, None), #
@@ -253,7 +518,32 @@ def parse_adj(action_dict):
 				]
 	return get_action_idxs(action_tuples, action_dict)
 
-def parse_prep(action_dict):
+
+def parse_adj(action_dict):
+	action_tuples = [
+				[
+				("inhibit_area", PREP, None),
+				("inhibit_fiber", DET, PREP_P),
+				("inhibit_fiber", NOUN, PREP_P),
+				("inhibit_fiber", PREP, PREP_P),
+				("disinhibit_area", ADJ, None),
+				("disinhibit_area", SUBJ, None),
+				("disinhibit_area", OBJ, None),
+				("disinhibit_fiber", LEX, ADJ),
+				("disinhibit_fiber", ADJ, SUBJ),
+				("disinhibit_fiber", ADJ, OBJ),
+				],
+
+				[("project_star", None, None),],
+
+				[
+				("inhibit_fiber", LEX, ADJ),
+				],
+			]
+	return get_action_idxs(action_tuples, action_dict)
+
+
+def old_parse_prep(action_dict):
 	action_tuples = [
 				[
 				("disinhibit_fiber", LEX, PREP),
@@ -275,7 +565,32 @@ def parse_prep(action_dict):
 				]
 	return get_action_idxs(action_tuples, action_dict)
 
-def go_activate(curid, newid, action_goto_next=[17], action_goto_prev=[16]):
+def parse_prep(action_dict):
+	action_tuples = [
+				[
+				("disinhibit_area", PREP, None),
+				("disinhibit_area", PREP_P, None),
+				("disinhibit_area", VERB_P, None),
+				("disinhibit_area", ROOT, None),
+				("disinhibit_fiber", LEX, PREP),
+				("disinhibit_fiber", PREP, PREP_P),
+				("disinhibit_fiber", PREP_P, VERB_P),
+				("disinhibit_fiber", VERB_P, ROOT),
+				("inhibit_area", ADJ, None),
+				("inhibit_fiber", ADJ, OBJ),
+				("inhibit_fiber", OBJ, VERB_P),
+				("inhibit_fiber", SUBJ, SUBJ_P),
+				],
+
+				[("project_star", None, None),],
+
+				[
+				("inhibit_fiber", LEX, PREP_P),
+				],
+			]
+	return get_action_idxs(action_tuples, action_dict)
+
+def go_activate(curid, newid, action_goto_next=[73], action_goto_prev=[74]):
 	'''
 	return a list of action idxs to activate item newid, starting from previous activated item curid
 	'''
@@ -320,7 +635,7 @@ def calculate_readout_reward(readout, goal, correct_record, reward_decay_factor,
 		if readout[jblock] == goal[jblock]: # block match
 			prerequisite[jblock] = 1
 			num_correct += 1
-			if correct_record[jblock]==0 and utils.check_prerequisite(prerequisite, jblock): # reward new correct blocks in this episode
+			if correct_record[jblock]==0 and check_prerequisite(prerequisite, jblock): # reward new correct word in this episode
 				if readout[jblock]==-1: # empty position gets smaller reward
 					units += empty_unit
 				else: # actual block match gets larger reward (with decay)
@@ -333,29 +648,33 @@ def calculate_readout_reward(readout, goal, correct_record, reward_decay_factor,
 
 def stimulate(source, destinations, assembly_dict, last_active_assembly):
 	sourceaid = last_active_assembly[source]
+	stimulate_success = False
 	if sourceaid==-1: # source is silent
-		return assembly_dict, last_active_assembly 
+		return assembly_dict, last_active_assembly, stimulate_success
 	for dest in destinations: # stimulate from source to each dest
-		print(f"source {source}, dest {dest}, assembly_dict[source]: {assembly_dict[source]}, sourceaid {sourceaid}")
+		# print(f"stimulate source {source}, dest {dest}, assembly_dict[source]: {assembly_dict[source]}, sourceaid {sourceaid}")
 		if dest in assembly_dict[source][sourceaid][0]: # if source assembly is connected with dest
 			destaid = assembly_dict[source][sourceaid][0].index(dest) # find the connected dest assembly
 			last_active_assembly[dest] = destaid # update active assembly in dest
-	return assembly_dict, last_active_assembly
+			stimulate_success = True
+	return assembly_dict, last_active_assembly, stimulate_success
 
-def synthetic_readout(simulator, readout_method=FIXED_MAP_READOUT):
+def readout(simulator, readout_method=None):
+	# method from paper
 	assembly_dict = copy.deepcopy(simulator.assembly_dict)
 	last_active_assembly = copy.deepcopy(simulator.last_active_assembly)
 	dependencies = []
 	def read(area, assembly_dict, last_active_assembly, mapping=ENGLISH_READOUT_RULES):
 		destinations = mapping[area]
-		assembly_dict, last_active_assembly = stimulate(source=area, destinations=destinations, assembly_dict=assembly_dict, last_active_assembly=last_active_assembly)
+		assembly_dict, last_active_assembly, stimulate_success = stimulate(source=area, destinations=destinations, assembly_dict=assembly_dict, last_active_assembly=last_active_assembly)
 		thisword = ALL_WORDS[last_active_assembly[LEX]]
 		for dest in destinations:
 			if dest==LEX:
 				continue
-			assembly_dict, last_active_assembly = stimulate(source=area, destinations=[LEX], assembly_dict=assembly_dict, last_active_assembly=last_active_assembly)
-			otherword = ALL_WORDS[last_active_assembly[LEX]]
-			dependencies.append([thisword, (otherword, dest)])
+			assembly_dict, last_active_assembly, stimulate_success = stimulate(source=area, destinations=[LEX], assembly_dict=assembly_dict, last_active_assembly=last_active_assembly)
+			if stimulate_success:
+				otherword = ALL_WORDS[last_active_assembly[LEX]]
+				dependencies.append([thisword, (otherword, dest)])
 		for dest in destinations:
 			if dest != LEX:
 				assembly_dict, last_active_assembly = read(dest, assembly_dict, last_active_assembly, mapping)
@@ -369,56 +688,66 @@ def synthetic_readout(simulator, readout_method=FIXED_MAP_READOUT):
 				treeify(vals, keynode)
 	if readout_method==FIXED_MAP_READOUT: # VERB --> SUBJ, OBJ, LEX
 		assembly_dict, last_active_assembly = read(VERB, assembly_dict, last_active_assembly)
-		print(f"dependencies: {dependencies}")
 		parsed = {VERB: dependencies}
 		root = pptree.Node(VERB)
 		treeify(parsed[VERB], root)
 	if readout_method==FIBER_READOUT:
 		activated_fibers = get_open_fibers(simulator)
 		assembly_dict, last_active_assembly = read(VERB, assembly_dict, last_active_assembly, mapping=activated_fibers)
-
-	print(f"dependencies from readout {dependencies}")
+	print("dependencies from readout", pprint.pprint(dependencies))
 	return dependencies
 
-def decode_dependencies(dependencies):
-	return ["word1", "word2"]
-
 def get_open_fibers(simulator):
-	return {source: [dest1, dest2]}
+	opened_fibers = {}
+	for idx, (area1, area2) in simulator.stateidx_to_fibername.items():
+		if simulator.state[idx]==1: # fiber opened
+			dests = opened_fibers.get(area1, [])
+			dests.append(area2)
+			opened_fibers[area1] = dests
+			dests = opened_fibers.get(area2, []) # bidirectional
+			dests.append(area1)
+			opened_fibers[area2] = dests
+	return opened_fibers
 
 def sample_sentence(complexity, max_input_length):
 	structures = [ [r] for r in LEXEME_DICT.keys()] # default single word
+	assert complexity>=2, f"complexity ({complexity}) should be >=2"
+	# [DET, ADJ, NOUN, VERB, DET, ADJ, NOUN, PREP, DET, NOUN, ADVERB]
 	if complexity==2:
 		structures = [
-					['noun', 'intransverb'],
+					[-1,-1,'noun', 'intransverb', -1,-1,-1, -1,-1,-1, -1],
 					]
 	elif complexity==3:
 		structures = [
-					['noun', 'transverb', 'noun'],
-					['det', 'noun', 'intransverb'],
-					['noun', 'intransverb', 'adv'],
-					['adj', 'noun', 'intransverb'],
-					['noun', 'copula', 'adj'],
+					[-1,-1,'noun', 'transverb', -1,-1,'noun', -1,-1,-1,-1],
+					['det',-1,'noun', 'intransverb', -1,-1,-1, -1,-1,-1, -1],
+					[-1,-1,'noun', 'intransverb', -1,-1,-1, -1,-1,-1, 'adv'],
+					[-1,'adj','noun', 'intransverb', -1,-1,-1, -1,-1,-1, -1],
 					]
 	struct = random.choice(structures)
 	words, roles = [], []
 	sentence = ""
 	for r in struct:
-		w = random.choice(list(LEXEME_DICT[r]))
+		w = ""
+		wid=-1
+		rid=-1
+		if r!=-1:
+			w = random.choice(list(LEXEME_DICT[r]))
+			wid = ALL_WORDS.index(w)
+			rid = list(LEXEME_DICT.keys()).index(r)
 		sentence += w
-		wid = ALL_WORDS.index(w)
 		words.append(wid)
-		rid = list(LEXEME_DICT.keys()).index(r)
 		roles.append(rid)
 	assert len(roles)==len(words), f"len of roles {roles} should match words {words}"
 	print(f"sample sentence with complexity {complexity}, struct {struct},\nsentence: {sentence}")
-	nwords = len(words)
+	# nwords = len(words)
+	nwords = complexity
 	if len(roles)<max_input_length: # pad empty positions
 		words += [-1]*(max_input_length-len(words))
 		roles += [-1]*(max_input_length-len(roles))
-	return nwords, [words, roles]
+	return nwords, words, roles
 
-def sample_episode(difficulty_mode, cur_curriculum_level, max_input_length, max_complexity=3):
+def sample_episode(difficulty_mode, cur_curriculum_level, max_input_length=len(OUTPUT_FORMAT), max_complexity=3):
 	'''
 	Create a goal sentence for the episode
 	Input
@@ -428,18 +757,18 @@ def sample_episode(difficulty_mode, cur_curriculum_level, max_input_length, max_
 		num_words: number of nonempty words in goal
 		goal: [[lex ids], [lex types]], each of length max_input_length
 	'''
-	complexity = None # actual number of blocks in the stack, to be modified
+	complexity = None # actual number of words in the stack, to be modified
 	if difficulty_mode=='curriculum':
 		assert cur_curriculum_level!=None, f"requested curriculum but current level is not given"
 		if cur_curriculum_level==-1:
 			complexity = random.randint(1, max_complexity)
 		else:
-			assert 1 <= cur_curriculum_level <= max_complexity, f"should have 1<= cur_curriculum_level ({cur_curriculum_level}) <= {self.stack_max_blocks}"
-			population = list(range(1, max_complexity+1)) # possible number of blocks
+			assert 1 <= cur_curriculum_level <= max_complexity, f"should have 1<= cur_curriculum_level ({cur_curriculum_level}) <= {max_input_length}"
+			population = list(range(2, max_complexity+1)) # possible number of words
 			weights = np.zeros(max_complexity)
-			weights[cur_curriculum_level-1] += 0.7 # weight for current level
-			weights[max(cur_curriculum_level-2, 0)] += 0.15 # weight for the prev level
-			weights[: max(cur_curriculum_level-2, 1)] += 0.15 / max(cur_curriculum_level-2, 1)
+			weights[cur_curriculum_level-2] += 0.7 # weight for current level
+			weights[max(cur_curriculum_level-3, 0)] += 0.15 # weight for the prev level
+			weights[: max(cur_curriculum_level-3, 1)] += 0.15 / max(cur_curriculum_level-3, 1)
 			assert np.sum(weights)==1, f"weights {weights} should sum to 1"
 			complexity = random.choices(population=population, weights=weights, k=1)[0]
 	elif difficulty_mode=='uniform' or (type(difficulty_mode)==int and difficulty_mode==-1): 
@@ -454,8 +783,8 @@ def sample_episode(difficulty_mode, cur_curriculum_level, max_input_length, max_
 		raise ValueError(f"unrecognized difficulty mode {difficulty_mode} (type {type(difficulty_mode)})")
 	assert complexity <= max_input_length, \
 		f"number of actual words {complexity} should be smaller than max_input_length {max_input_length}"
-	num_words, goal = sample_sentence(complexity, max_input_length) 
-	return num_words, goal
+	num_words, goal, roles = sample_sentence(complexity, max_input_length) 
+	return num_words, goal, roles
 
 def expert_demo_language(simulator):
 	def close_all_fibers():
@@ -467,8 +796,10 @@ def expert_demo_language(simulator):
 	final_actions = close_all_fibers()
 	curwid = simulator.last_active_assembly[LEX]
 	action_dict = simulator.action_dict
-	[words, roles] = simulator.goal
+	words, roles = simulator.goal, simulator.input_roles
 	for wid, rid in zip(words, roles):
+		if wid==-1:
+			continue
 		final_actions += go_activate(curwid, wid)
 		r = list(LEXEME_DICT.keys())[rid]
 		if r=='det':
@@ -492,7 +823,7 @@ def expert_demo_language(simulator):
 		curwid = wid
 	return final_actions
 
-def synthetic_project(simulator, max_project_round=5, verbose=True):
+def synthetic_project(simulator, max_project_round=5, verbose=False):
 	'''
 	Strong project with symbolic assemblies.
 	'''
@@ -517,7 +848,7 @@ def synthetic_project(simulator, max_project_round=5, verbose=True):
 		for idx in simulator.stateidx_to_fibername.keys(): # get opened fibers from state vector
 			if state[idx]==1: # fiber is open
 				area1, area2 = simulator.stateidx_to_fibername[idx] # get areas on both ends
-				area1opened = state[simulator.area_to_stateidx[area1]['opened']]==1
+				area1opened = state[simulator.area_to_stateidx[area1]['opened']]==1 
 				area2opened = state[simulator.area_to_stateidx[area2]['opened']]==1
 				if area1 != lexicon_area and area1opened: # skip if this is lex area
 					opened_areas = set([area1]).union(opened_areas)

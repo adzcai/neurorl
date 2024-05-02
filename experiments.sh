@@ -15,4 +15,4 @@ mamba activate neurorl
 
 #Your job commands go here
 cd /n/home04/yichenli/human-sf
-python envs/blocksworld/AC/experiments.py >> chaininglog.txt
+python envs/blocksworld/AC/experiments.py >> chaining.txt

@@ -1328,18 +1328,79 @@ if __name__ == "__main__":
         eval_test_puzzles=False, # whether to eval on 100 jBrain puzzles
         eval_num_stacks=False, fixed_num_blocks=4, # whether to vary num stacks while fixing num block
         eval_steps=False, max_oracle_steps=40, nsamples=500, # whether to eval on varying solution lengths
-        nrepeats=2, # num samples for all analyses except eval_steps
+        nrepeats=200, # num samples for all analyses except eval_steps
         groupname='easy2-10plan', # which model to load
       )
 
 '''
+'Q3~10-2v8max5-10-7'
+  stack_max_blocks=7, 
+  puzzle_max_blocks=10,
+  puzzle_max_stacks=5,
+  sparse_reward=False,
+  curriculum: 3~10 (no leak),
+  up_threshold: 0.8,
+  down_threshold: -2,
+  compositional=False,
+
+'Qsparse3~10-2v8max5-10-7'
+  stack_max_blocks=7, 
+  puzzle_max_blocks=10,
+  puzzle_max_stacks=5,
+  sparse_reward=True,
+  curriculum: 3~10 (no leak),
+  up_threshold: 0.8,
+  down_threshold: -2,
+  compositional=False, 
+
+'Q3~10comp-2v8max1-11-7'
+  stack_max_blocks=7, 
+  puzzle_max_blocks=11,
+  puzzle_max_stacks=1,
+  sparse_reward=False,
+  curriculum: 3~10 (no leak),
+  up_threshold: 0.8,
+  down_threshold: -2,
+  compositional=True, compositional_type='newblock', compositional_holdout=[2,3,5,7],
+
+'Qsparse3~10comp-2v8max1-11-7'
+  stack_max_blocks=7, 
+  puzzle_max_blocks=11,
+  puzzle_max_stacks=1,
+  sparse_reward=True,
+  curriculum: 3~10 (no leak),
+  up_threshold: 0.8,
+  down_threshold: -2,
+  compositional=True, compositional_type='newblock', compositional_holdout=[2,3,5,7],
+
 'easy2-10plan'
-  stack_max_blocks: 7, 
-  puzzle_max_blocks: 10,
-  puzzle_max_stacks: 5,
+  stack_max_blocks=7, 
+  puzzle_max_blocks=10,
+  puzzle_max_stacks=5,
+  sparse_reward=False,
   curriculum: 2~10 (no leak),
   up_threshold: 0.6,?
   down_threshold: 0.4,?
-  compositional: False,
+  compositional=False,
+
+'2~10plan5v8currleak'
+  stack_max_blocks=7, 
+  puzzle_max_blocks=10,
+  puzzle_max_stacks=5,
+  sparse_reward=False,
+  curriculum: 2~10 (leak),
+  up_threshold: 0.8,
+  down_threshold: 0.5,
+  compositional=False,
+
+'10only'
+  stack_max_blocks=7, 
+  puzzle_max_blocks=10,
+  puzzle_max_stacks=5,
+  sparse_reward=False,
+  curriculum: 10 only (no leak),
+  up_threshold: 0.8,?
+  down_threshold: -2,
+  compositional=False,
 
 '''

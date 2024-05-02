@@ -32,12 +32,12 @@ configurations = {
 	'cfg': 'plan',
 	'max_steps': 200 , # maximum number of actions allowed in each episode
 	'reward_decay_factor': 0.99 ,  # reward discount factor, descending (first index is most rewarding) if 0 < factor < 1, ascending if factor > 1
-	'sparse_reward': True, # whether to only grant reward when episode terminates. If False, grant intermediate subrewards.
+	'sparse_reward': False, # whether to only grant reward when episode terminates. If False, grant intermediate subrewards.
 	'action_cost': 1e-3 , # cost for performing any action
 	'empty_block_unit': 0.005, # reward unit to give for each correct empty block
 	'num_actions': None, # number of actions in the brain, will be filled once env is created
 	'action_dict': None, # action dict, will be filled once env is created
-	'curriculum': 4, # starting level, determine number of blocks in puzzle, in {0 (uniform), 2,..., puzzle_max_blocks}
+	'curriculum': 3, # starting level, determine number of blocks in puzzle, in {0 (uniform), 2,..., puzzle_max_blocks}
 	'leak': False, # whether to leak harder puzzles during curriculum
 	'compositional': False, # whether in compositional mode
 	'compositional_type': 'newblock', # {None, 'newblock', 'newconfig'}, if None: do not apply compositional training, 

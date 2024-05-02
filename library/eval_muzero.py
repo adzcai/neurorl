@@ -1416,65 +1416,89 @@ if __name__ == "__main__":
         eval_test_puzzles=False, # whether to eval on 100 jBrain puzzles
         eval_num_stacks=False, fixed_num_blocks=4, # whether to eval on varying num stacks while fixing num blocks
         eval_steps=False, max_oracle_steps=40, nsamples=500, # whether to eval on solution lengths
-        nrepeats=100, # num samples for all analyses except eval_steps
+        nrepeats=50, # num samples for all analyses except eval_steps
         groupname='M4~10-2v8max5-10-7', # model to load
       )
 
 '''
-'Msparse4~10comp-2v8max1-11-7'
-  stack_max_blocks: 7, 
-  puzzle_max_blocks: 11,
-  puzzle_max_stacks: 1,
+'Msparse4~10-2v8max5-10-7'
+  stack_max_blocks=7, 
+  puzzle_max_blocks=10,
+  puzzle_max_stacks=5,
+  sparse_reward=True,
   curriculum: 4~10 (no leak),
   up_threshold: 0.8,
   down_threshold: -2,
-  compositional: True,
-  compositional_type: 'newblock',
-  compositional_holdout: [2,3,5,7],
-  sparse_reward: True,
+  compositional=False,
+
+'M4~10-2v8max5-10-7'
+  stack_max_blocks=7, 
+  puzzle_max_blocks=10,
+  puzzle_max_stacks=5,
+  sparse_reward=False,
+  curriculum: 4~10 (no leak),
+  up_threshold: 0.8,
+  down_threshold: -2,
+  compositional=False,
+
+'Msparse4~10comp5v8max2-11-7'
+  stack_max_blocks=7, 
+  puzzle_max_blocks=11,
+  puzzle_max_stacks=2,
+  sparse_reward=True,
+  curriculum: 4~10 (no leak),
+  up_threshold: 0.8,
+  down_threshold: -2,
+  compositional=True, compositional_type='newblock', compositional_holdout=[2,3,5,7], 
 
 'Mu4~10comp5v8max2-11-7'
-  stack_max_blocks: 7, 
-  puzzle_max_blocks: 11,
-  puzzle_max_stacks: 2,
+  stack_max_blocks=7, 
+  puzzle_max_blocks=11,
+  puzzle_max_stacks=2,
+  sparse_reward=False,
   curriculum: 4~10 (no leak),
   up_threshold: 0.8,
   down_threshold: -2,
-  compositional: True,
-  compositional_type: 'newblock',
-  compositional_holdout: [2,3,5,7],
-  sparse_reward: False,
+  compositional=True, compositional_type='newblock', compositional_holdout=[2,3,5,7], 
+
+'Msparse4~10comp5v8max1-11-7'
+  stack_max_blocks=7, 
+  puzzle_max_blocks=11,
+  puzzle_max_stacks=1,
+  sparse_reward=True,
+  curriculum: 4~10 (no leak),
+  up_threshold: 0.8,
+  down_threshold: -2,
+  compositional=True, compositional_type='newblock', compositional_holdout=[2,3,5,7],
 
 'Mu4~10comp5v8max1-11-7'
-  stack_max_blocks: 7, 
-  puzzle_max_blocks: 11,
-  puzzle_max_stacks: 1,
+  stack_max_blocks=7, 
+  puzzle_max_blocks=11,
+  puzzle_max_stacks=1,
+  sparse_reward=False,
   curriculum: 4~10 (no leak),
   up_threshold: 0.8,
   down_threshold: -2,
-  compositional: True,
-  compositional_type: 'newblock',
-  compositional_holdout: [2,3,5,7],
-  sparse_reward: False,
+  compositional=True, compositional_type='newblock', compositional_holdout=[2,3,5,7],
 
 'muz4+8v-2'
-  stack_max_blocks: 7, 
-  puzzle_max_blocks: 10,
-  puzzle_max_stacks: 5,
+  stack_max_blocks=7, 
+  puzzle_max_blocks=10,
+  puzzle_max_stacks=5,
+  sparse_reward=False,
   curriculum: 4+ (no leak),
   up_threshold: 0.8,
   down_threshold: -2,
-  compositional: False,
-  sparse_reward: False,
+  compositional=False,
 
 'muz2~10long5v8'
-  stack_max_blocks: 7, 
-  puzzle_max_blocks: 10,
-  puzzle_max_stacks: 5,
+  stack_max_blocks=7, 
+  puzzle_max_blocks=10,
+  puzzle_max_stacks=5,
+  sparse_reward=False,
   curriculum: 2~10 (no leak),
   up_threshold: 0.8,
   down_threshold: 0.5,
-  compositional: False,
-  sparse_reward: False,
+  compositional=False,
 
 '''

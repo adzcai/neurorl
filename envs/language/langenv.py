@@ -1,11 +1,18 @@
 '''
 env for parse language
 
-// interactive session
-salloc -p gpu_test -t 0-01:00 --mem=8000 --gres=gpu:1
+salloc -p gpu_test -t 0-03:00 --mem=80000 --gres=gpu:1
+
+salloc -p test -t 0-01:00 --mem=200000 
+
 module load python/3.10.12-fasrc01
 mamba activate neurorl
+
+python envs/language/langenv.py
+
 '''
+
+
 import numpy as np
 import random
 import pprint
@@ -29,15 +36,17 @@ class Simulator():
 				max_steps = configurations['max_steps'],
 				max_input_length = configurations['max_input_length'],
 				action_cost = configurations['action_cost'],
+				empty_unit = configurations['empty_unit'],
 				reward_decay_factor = configurations['reward_decay_factor'],
 				area_status = configurations['area_status'],
 				max_complexity = configurations['max_complexity'],
 				verbose=False):
-		self.all_areas, self.lexicon_area, self.det_area, self.verb_area, self.all_fibers = utils.init_simulator_areas()
+		self.all_areas, self.lexicon_area, self.det_area, self.all_fibers = utils.init_simulator_areas()
 		self.max_lexicon = max_lexicon
 		self.max_steps = max_steps # max steps allowed in episode
 		self.max_input_length = max_input_length # max num of words in sentence
 		self.action_cost = action_cost
+		self.empty_unit = empty_unit
 		self.reward_decay_factor = reward_decay_factor
 		self.episode_max_reward = episode_max_reward
 		self.verbose = verbose
@@ -56,7 +65,7 @@ class Simulator():
 			state: (numpy array with float32)
 			info: (any=None)
 		'''
-		self.num_words, self.goal = utils.sample_episode(difficulty_mode=difficulty_mode, 
+		self.num_words, self.goal, self.input_roles = utils.sample_episode(difficulty_mode=difficulty_mode, 
 														cur_curriculum_level=cur_curriculum_level, 
 														max_input_length=self.max_input_length,
 														max_complexity=self.max_complexity)
@@ -76,7 +85,7 @@ class Simulator():
 		Close and clear the environment.
 		Return nothing.
 		'''
-		del self.num_words, self.goal
+		del self.num_words, self.goal, self.input_roles
 		del self.unit_reward
 		del self.state
 		del self.action_to_statechange, self.area_to_stateidx, self.stateidx_to_fibername, self.assembly_dict, self.last_active_assembly
@@ -139,7 +148,7 @@ class Simulator():
 					self.state[area_to_stateidx[area_name][self.area_status[2]]] = len(self.assembly_dict[area_name])
 				# readout stack	and compute reward
 				readout = utils.synthetic_readout(self)
-				units, self.all_correct, self.correct_record = utils.calculate_readout_reward(readout, self.goal, self.correct_record, self.reward_decay_factor)
+				units, self.all_correct, self.correct_record = utils.calculate_readout_reward(readout, self.goal, self.correct_record, self.reward_decay_factor, self.empty_unit)
 				reward += self.unit_reward * units
 				# update current stack in state
 				for ib, sidx in enumerate(area_to_stateidx["readout"]):
@@ -155,14 +164,14 @@ class Simulator():
 				self.last_active_assembly[self.lexicon_area] = newlexid # update the last active assembly
 			self.just_projected = False
 		elif action_name == "clear_det": 
-			if self.last_active_assembly[self.det_area]== -1: # BAD, head is already silence
+			if self.last_active_assembly[self.det_area]== -1: # BAD, already silenced
 				assert self.state[area_to_stateidx[self.det_area]['last_activated']] == -1, \
-				f"in state vector, the last activated assembly in head ({self.state[area_to_stateidx[self.head][0]]}) should already be -1 for repeative silence"
+				f"in state vector, the last activated assembly in det ({self.state[area_to_stateidx[self.head][0]]}) should already be -1 for repeative silence"
 				reward -= self.action_cost
 			else: # GOOD, valid clear
 				self.last_active_assembly[self.det_area] = -1 # deactivate det
 				readout = utils.synthetic_readout(self)
-				units, self.all_correct, self.correct_record = utils.calculate_readout_reward(readout, self.goal, self.correct_record, self.reward_decay_factor)
+				units, self.all_correct, self.correct_record = utils.calculate_readout_reward(readout, self.goal, self.correct_record, self.reward_decay_factor, self.empty_unit)
 				reward += units * self.unit_reward
 				for sidx, sval in zip(state_change_tuple[0], state_change_tuple[1]):
 					self.state[sidx] = sval # update state
@@ -227,19 +236,19 @@ class Simulator():
 		# encode goal sentence words
 		area_to_stateidx["goalword"] = []
 		for ib in range(self.max_input_length):
-			if self.goal[0][ib]==None:  # filler for empty block
+			if self.goal[ib]==None:  # filler for empty block
 				state_vec.append(-1)
 			else:
-				state_vec.append(self.goal[0][ib])
+				state_vec.append(self.goal[ib])
 			area_to_stateidx["goalword"].append(state_vector_idx) # state idx for goal
 			state_vector_idx += 1 # increment state index
 		# encode goal sentence word types
 		area_to_stateidx["goaltype"] = []
 		for ib in range(self.max_input_length):
-			if self.goal[1][ib]==None:  # filler for nontype
+			if self.input_roles[ib]==None:  # filler for nontype
 				state_vec.append(-1)
 			else:
-				state_vec.append(self.goal[1][ib])
+				state_vec.append(self.input_roles[ib])
 			area_to_stateidx["goaltype"].append(state_vector_idx) # state idx for goal
 			state_vector_idx += 1 # increment state index
 		# encode fiber inhibition status
@@ -264,7 +273,7 @@ class Simulator():
 			assembly_dict[area] = [] # will become {area: [a_id 0[source a_name[A1, A2], source a_id [a1, a2]], 1[[A3], [a3]], 2[(A4, a4)], ...]}
 		# encode area inhibition status
 		for area in self.all_areas:
-			if area==self.lexicon_area or area==self.verb_area:
+			if area==self.lexicon_area:
 				state_vec.append(1) # these two areas are always opened
 				area_to_stateidx[area] = {'opened': state_vector_idx} # area -> state idx
 				state_vector_idx += 1
@@ -289,7 +298,7 @@ class Simulator():
 		for istatus, status_name in enumerate(self.area_status): 
 			for area_name in self.all_areas: 
 				if istatus==0: # encode last activated assembly index in this area
-					area_to_stateidx[area_name] = {status_name: state_vector_idx} # area -> state idx
+					area_to_stateidx[area_name][status_name] = state_vector_idx # area -> state idx
 					state_vec.append(-1) # initialize most recent assembly as none 
 				elif istatus==1: # encode number of lexicon-connected assemblies in this area
 					area_to_stateidx[area_name][status_name] = state_vector_idx # area -> state idx
@@ -348,7 +357,7 @@ class Simulator():
 			dictionary[idx] = ("inhibit_fiber", area1, area2)
 			idx += 1
 		for area in self.all_areas:
-			if area==self.lexicon_area or area==self.verb_area:
+			if area==self.lexicon_area:
 				continue
 			dictionary[idx] = ("disinhibit_area", area, None)
 			idx += 1
@@ -375,7 +384,7 @@ def test_simulator(expert=True, repeat=1, verbose=False):
 	pprint.pprint(sim.action_dict)
 	start_time = time.time()
 	avg_expert_len = []
-	for complexity in range(1, sim.max_complexity+1):
+	for complexity in range(2, sim.max_complexity+1):
 		expert_len = []
 		print(f"complexity: {complexity}")
 		for r in range(repeat):
@@ -391,9 +400,12 @@ def test_simulator(expert=True, repeat=1, verbose=False):
 				next_state, reward, terminated, truncated, info = sim.step(action_idx)
 				rtotal += reward
 				print(f't={t},\tr={round(reward, 5)},\taction={action_idx}\t{sim.action_dict[action_idx]},\ttruncated={truncated},\tdone={terminated},\n\tjust_projected={sim.just_projected}, all_correct={sim.all_correct}, correct_record={sim.correct_record}') if verbose else 0
-				print(f'\tnext state {next_state}\t') if verbose else 0
+				# print(f'\tnext state {next_state}\t') if verbose else 0
 			readout = utils.synthetic_readout(sim)
-			print(f'end of episode (complexity={complexity}), num_words={sim.num_words}, synthetic readout {readout}, goal {sim.goal}, total reward={rtotal}, time lapse={time.time()-start_time}') if verbose else 0
+			print(f'end of episode (complexity={complexity}), num_words={sim.num_words}, \
+					\nsynthetic readout {readout} ({utils.translate(readout)}), \
+					\ngoal {sim.goal} ({utils.translate(sim.goal)}), \
+					\ntotal reward={rtotal}, time lapse={time.time()-start_time}') if verbose else 0
 			if expert:
 				assert readout == sim.goal, f"readout {readout} and goal {sim.goal} should be the same"
 				assert terminated, "episode should be done"
@@ -419,5 +431,4 @@ if __name__ == "__main__":
 
 	random.seed(1)
 	test_simulator(expert=True, repeat=1, verbose=True)
-	# test_simulator(expert=True, repeat=200, verbose=False)
 	

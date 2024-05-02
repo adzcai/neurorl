@@ -7,6 +7,7 @@ configurations = {
 'max_steps': 200, # maximum number of actions allowed in each episode
 'reward_decay_factor': 0.9, # reward discount factor, descending (first index is most rewarding) if 0 < factor < 1, ascending if factor > 1
 'action_cost': 1e-3, # cost for performing any action
+'empty_unit': 0.005, # reward unit to give for each correct empty block
 'max_assemblies': 50, # maximum number of assemblies for each area in the state representation
 'num_fibers': None, # number of fibers in the brain, will be filled once env is created
 'num_areas': None, # number of areas in the brain, will be filled once env is created
