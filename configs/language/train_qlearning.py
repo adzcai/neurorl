@@ -5,19 +5,19 @@ module load python/3.10.12-fasrc01
 mamba activate neurorl
 
 // launch parallel job
-python configs/blocksworld/train_plan_qlearning.py \
+python configs/language/train_qlearning.py \
   --search='initial' \
   --parallel='sbatch' \
   --num_actors=1 \
   --use_wandb=True \
   --partition=gpu \
   --wandb_entity=yichenli \
-  --wandb_project=plan \
+  --wandb_project=language \
   --run_distributed=True \
   --time=0-72:00:00 
 
 // test in interactive session
-python configs/blocksworld/train_plan_qlearning.py \
+python configs/language/train_qlearning.py \
   --search='initial' \
   --parallel='none' \
   --run_distributed=True \
@@ -60,11 +60,11 @@ import library.parallel as parallel
 import library.utils as utils
 import library.networks as networks
 
-from envs.blocksworld import plan
-from envs.blocksworld.cfg import configurations 
+from envs.language import langenv
+from envs.language.cfg import configurations 
 
 obsfreq = 5000 # frequency to call observer
-plotfreq = 50000 # frequency to plot action trajectory
+plotfreq = 0.1#50000 # frequency to plot action trajectory
 UP_PRESSURE_THRESHOLD = 5 # pressure threshold to increase curriculum
 DOWN_PRESSURE_THRESHOLD = 10 # pressure threshold to decrease curriculum
 UP_REWARD_THRESHOLD = 2 #0.8 # upper reward threshold for incrementing up pressure
@@ -95,9 +95,10 @@ State = jax.Array
 def observation_encoder(
     inputs: acme_wrappers.observation_action_reward.OAR,
     num_actions: int,
-    stack_max_blocks: int=configurations['stack_max_blocks'],
-    puzzle_max_blocks: int=configurations['puzzle_max_blocks'],
-    puzzle_max_stacks: int=configurations['puzzle_max_stacks']):
+    max_sentence_length: int=configurations['max_sentence_length'],
+    num_fibers: int=configurations['num_fibers'],
+    num_areas: int=configurations['num_areas'],
+    max_assemblies: int=configurations['max_assemblies']):
   """
   A neural network to encode the environment observation / state.
   In the case of parsing blocks, 
@@ -105,26 +106,34 @@ def observation_encoder(
     and embeddings for previous reward and action,
     then it concatenates all embeddings as input.
   The neural network is a multi-layer perceptron with relu.
-
+	observation: [cur lex readout (initialized as all -1s),
+					goal lex (padding with -1),
+					goal part of speech (padding -1 at the end),
+					fiber inhibition status (initialized as all closed 0s),
+					area inhibition status (initialized as all closed 0s),
+					last activated assembly idx in the area (initialized as all -1s), 
+					number of lexicon-connected assemblies in each area (initialized as 0s, or max_lexicon for lexicon area),
+					number of all assemblies in each area (initialized as 0s, or max_lexicon for lexicon area),
+					]
   Returns:
     The output of the neural network, ie. the encoded representation.
   """
   # embeddings for different elements in state repr
-  curstack_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
-  cut1 = stack_max_blocks*puzzle_max_stacks # state idx as cutting point
-  goalstack_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
-  cut2 = cut1+stack_max_blocks*puzzle_max_stacks
-  table_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
-  cut3 = cut2+puzzle_max_blocks
-  corhist_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
-  cut4 = cut3+puzzle_max_stacks
-  spointer_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
-  cut5 = cut4+1
-  tpointer_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
-  cut6 = cut5+1
-  iparsed_embed = hk.Linear(64, w_init=hk.initializers.TruncatedNormal())
-  cut7 = cut6+1
-  gparsed_embed = hk.Linear(64, w_init=hk.initializers.TruncatedNormal())
+  curlex_embed = hk.Linear(512, w_init=hk.initializers.TruncatedNormal())
+  cut1 = max_sentence_length # state idx as cutting point
+  goallex_embed = hk.Linear(512, w_init=hk.initializers.TruncatedNormal())
+  cut2 = cut1+max_sentence_length
+  goalpos_embed = hk.Linear(512, w_init=hk.initializers.TruncatedNormal())
+  cut3 = cut2+max_sentence_length
+  fiber_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+  cut4 = cut3+num_fibers
+  area_embed1 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+  cut5 = cut4+num_areas
+  area_embed2 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+  cut6 = cut5+num_areas
+  area_embed3 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+  cut7 = cut6+num_areas
+  area_embed4 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
   # embeddings for prev reward and action
   reward_embed = hk.Linear(128, w_init=hk.initializers.RandomNormal())
   action_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
@@ -133,14 +142,14 @@ def observation_encoder(
   def fn(x, dropout_rate=None):
     # concatenate embeddings and previous reward and action
     x = jnp.concatenate((
-        curstack_embed(jax.nn.one_hot(x.observation[:cut1], puzzle_max_blocks).reshape(-1)),
-        goalstack_embed(jax.nn.one_hot(x.observation[cut1:cut2], puzzle_max_blocks).reshape(-1)),
-        table_embed(jax.nn.one_hot(x.observation[cut2:cut3], puzzle_max_blocks).reshape(-1)),
-        corhist_embed(jax.nn.one_hot(x.observation[cut3:cut4], stack_max_blocks).reshape(-1)),
-        spointer_embed(jax.nn.one_hot(x.observation[cut4:cut5], puzzle_max_stacks).reshape(-1)),
-        tpointer_embed(jax.nn.one_hot(x.observation[cut5:cut6], puzzle_max_blocks).reshape(-1)),
-        iparsed_embed(jax.nn.one_hot(x.observation[cut6:cut7], 2).reshape(-1)),
-        iparsed_embed(jax.nn.one_hot(x.observation[cut7:], 2).reshape(-1)),
+        curlex_embed(x.observation[:cut1].reshape(-1)),
+        goallex_embed(x.observation[cut1:cut2].reshape(-1)),
+        goalpos_embed(x.observation[cut2:cut3].reshape(-1)),
+        fiber_embed(jax.nn.one_hot(x.observation[cut3:cut4], 2).reshape(-1)),
+        area_embed1(jax.nn.one_hot(x.observation[cut4:cut5], 2).reshape(-1)),
+        area_embed2(jax.nn.one_hot(x.observation[cut5:cut6], max_assemblies).reshape(-1)),
+        area_embed3(jax.nn.one_hot(x.observation[cut6:cut7], max_assemblies).reshape(-1)),
+        area_embed4(jax.nn.one_hot(x.observation[cut7:], max_assemblies).reshape(-1)),
         reward_embed(jnp.expand_dims(x.reward, 0)), 
         action_embed(jax.nn.one_hot(x.action, num_actions))  
       ))
@@ -163,8 +172,8 @@ def make_qlearning_networks(
   Builds default R2D2 networks for Q-learning based on the environment specifications and configurations.
   """
   num_actions = int(env_spec.actions.maximum - env_spec.actions.minimum) + 1
-  import envs.blocksworld.cfg as bwcfg
-  assert num_actions == bwcfg.configurations['plan']['num_actions']
+  import envs.language.cfg as langcfg
+  assert num_actions == langcfg.configurations['num_actions']
 
   def make_core_module() -> q_learning.R2D2Arch:
 
@@ -207,14 +216,11 @@ class QObserver(basics.ActorObserver):
 
   def observe_first(self, state: basics.ActorState, timestep: dm_env.TimeStep) -> None:
     """Observes the initial state and initial time-step.
-
     Usually state will be all zeros and time-step will be output of reset."""
     self.idx += 1
-
     # epsiode just ended, flush metrics if you want
     if self.idx > 0:
       self.get_metrics()
-
     # start collecting metrics again
     self.actor_states = [state]
     self.timesteps = [timestep]
@@ -222,14 +228,12 @@ class QObserver(basics.ActorObserver):
 
   def observe_action(self, state: basics.ActorState, action: jax.Array) -> None:
     """Observe state and action that are due to observation of time-step.
-
     Should be state after previous time-step along"""
     self.actor_states.append(state)
     self.actions.append(action)
 
   def observe_timestep(self, timestep: dm_env.TimeStep) -> None:
     """Observe next.
-
     Should be time-step after selecting action"""
     self.timesteps.append(timestep)
 
@@ -241,15 +245,15 @@ class QObserver(basics.ActorObserver):
       return 
 
     print('\n\nlogging!')
-    import envs.blocksworld.cfg as bwcfg
-    max_steps = bwcfg.configurations['plan']['max_steps']
-    curriculum = bwcfg.configurations['plan']['curriculum']
+    import envs.language.cfg as langcfg
+    max_steps = langcfg.configurations['max_steps']
+    curriculum = langcfg.configurations['curriculum']
+    action_dict = langcfg.configurations['action_dict']
     global up_pressure, down_pressure, UP_PRESSURE_THRESHOLD, DOWN_PRESSURE_THRESHOLD, UP_REWARD_THRESHOLD, DOWN_REWARD_THRESHOLD
-    tmp_down_threshold = DOWN_PRESSURE_THRESHOLD * (curriculum-1) if 2<=curriculum<=configurations['puzzle_max_blocks'] else DOWN_PRESSURE_THRESHOLD*configurations['puzzle_max_blocks'] # adjust threshold for higher curriculum
+    tmp_down_threshold = DOWN_PRESSURE_THRESHOLD * (curriculum-1) if 2<=curriculum<=configurations['max_complexity'] else DOWN_PRESSURE_THRESHOLD*configurations['max_sentence_length'] # adjust threshold for higher curriculum
     print(f"current curriculum {curriculum}, up_pressure {up_pressure} / {UP_PRESSURE_THRESHOLD}, down_pressure {down_pressure} / {tmp_down_threshold}")
     # first prediction is empty (None)
     results = {}
-    action_dict = bwcfg.configurations['plan']['action_dict']
     q_values = [s.predictions for s in self.actor_states[1:]]
     q_values = jnp.stack(q_values)
     npreds = len(q_values)
@@ -270,13 +274,13 @@ class QObserver(basics.ActorObserver):
     # plot actions
     if self.idx % self.plot_every == 0: 
       fig, ax = plt.subplots(max_steps//10, 10, figsize=(30, 6*(max_steps//10)))
-      cut1 = configurations['stack_max_blocks']*configurations['puzzle_max_stacks'] # state idx as cutting point
-      cut2 = cut1+configurations['stack_max_blocks']*configurations['puzzle_max_stacks']
-      cut3 = cut2+configurations['puzzle_max_blocks']
-      cut4 = cut3+configurations['puzzle_max_stacks']
-      cut5 = cut4+1
-      cut6 = cut5+1
-      cut7 = cut6+1
+      cut1 = max_sentence_length # state idx as cutting point
+      cut2 = cut1+max_sentence_length
+      cut3 = cut2+max_sentence_length
+      cut4 = cut3+num_fibers
+      cut5 = cut4+num_areas
+      cut6 = cut5+num_areas
+      cut7 = cut6+num_areas
       for t in range(npreds):
         irow = t//10
         jcol = t%10
@@ -320,20 +324,20 @@ class QObserver(basics.ActorObserver):
       down_pressure = 0
     # up pressure reached threshold
     if up_pressure >= UP_PRESSURE_THRESHOLD: 
-      if 2<=curriculum<=configurations['puzzle_max_blocks']-1:
+      if 2<=curriculum<=configurations['max_complexity']-1:
         curriculum += 1
         print(f'up_pressure reached threshold, increasing curriculum from {curriculum-1} to {curriculum}')
-      elif curriculum==configurations['puzzle_max_blocks']:
-        curriculum = configurations['puzzle_max_blocks'] 
+      elif curriculum==configurations['max_complexity']:
+        curriculum = configurations['max_complexity'] 
         print(f"up_pressure reached threshold, staying at curriculum {curriculum}")
       elif curriculum==0: 
         print(f'up_pressure reached threshold, staying at curriculum {curriculum}')
       else:
-        raise ValueError(f"curriculum {curriculum} should be int in set(0, 2, 3, ..., {configurations['puzzle_max_blocks']})")
+        raise ValueError(f"curriculum {curriculum} should be int in set(0, 2, 3, ..., {configurations['max_complexity']})")
       up_pressure = 0 # release pressure
     # down pressure reached threshold
     elif down_pressure >= tmp_down_threshold: 
-      if 3<=curriculum<=configurations['puzzle_max_blocks']:
+      if 3<=curriculum<=configurations['max_complexity']:
         curriculum -= 1
         print(f'down_pressure reached threshold, decreasing curriculum from {curriculum+1} to {curriculum}')
       elif curriculum==0:
@@ -342,9 +346,9 @@ class QObserver(basics.ActorObserver):
         curriculum = 2
         print(f"down_pressure reached threshold, staying at curriculum {curriculum}")
       else:
-        raise ValueError(f"curriculum {curriculum} should be int in set(0, 2, 3, ..., {configurations['puzzle_max_blocks']})")
+        raise ValueError(f"curriculum {curriculum} should be int in set(0, 2, 3, ..., {configurations['max_complexity']})")
       down_pressure = 0 # release pressure
-    bwcfg.configurations['plan']['curriculum'] = curriculum # update curriculum in cfg file
+    langcfg.configurations['curriculum'] = curriculum # update curriculum in cfg file
     print('logging ends\n\n')
     return results
   
@@ -362,24 +366,26 @@ def make_environment(seed: int = 0 ,
   del evaluation
 
   # create dm_env
-  sim = plan.Simulator()
+  sim = langenv.Simulator()
   sim.reset()
   
   # insert info into cfg
-  import envs.blocksworld.cfg as bwcfg
-  bwcfg.configurations['plan']['num_actions'] = sim.num_actions
-  bwcfg.configurations['plan']['action_dict'] = sim.action_dict
-  env = plan.EnvWrapper(sim)
+  import envs.language.cfg as langcfg
+  langcfg.configurations['num_actions'] = sim.num_actions
+  langcfg.configurations['action_dict'] = sim.action_dict
+  langcfg.configurations['max_sentence_length'] = sim.max_sentence_length
+  langcfg.configurations['num_areas'] = sim.num_areas
+  langcfg.configurations['num_fibers'] = sim.num_fibers
+  env = langenv.EnvWrapper(sim)
 
   # add acme wrappers
-  wrapper_list = [
-    # put action + reward in observation
-    acme_wrappers.ObservationActionRewardWrapper,
-    # cheaper to do computation in single precision
+  wrapper_list = [ # put action + reward in observation
+    acme_wrappers.ObservationActionRewardWrapper,# cheaper to do computation in single precision
     acme_wrappers.SinglePrecisionWrapper,
   ]
 
   return acme_wrappers.wrap_all(env, wrapper_list)
+
 
 def setup_experiment_inputs(
     agent_config_kwargs: dict=None,
@@ -641,7 +647,7 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['Q6only-2v2max5-10-7']),
+            "group": tune.grid_search(['Q2only-2v2']),
             "num_steps": tune.grid_search([500e6]),
 
             "samples_per_insert": tune.grid_search([20.0]),

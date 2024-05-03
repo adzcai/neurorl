@@ -18,7 +18,7 @@ import itertools
 import pprint 
 import numpy as np
 
-# BrainAreas
+# brain areas
 LEX = "LEX"
 DET = "DET"
 SUBJ = "SUBJ"
@@ -28,17 +28,14 @@ PREP = "PREP"
 PREP_P = "PREP_P"
 ADJ = "ADJ"
 ADVERB = "ADVERB"
-
 ROOT = 'ROOT'
 SUBJ_P = 'SUBJ_P'
 VERB_P = 'VERB_P'
 OBJ_P = 'OBJ_P'
 NOUN = 'NOUN'
-
-# AREAS = [LEX, DET, SUBJ, OBJ, VERB, ADJ, ADVERB, PREP, PREP_P]
-AREAS = [LEX, DET, SUBJ, OBJ, VERB, ADJ, ADVERB, PREP, PREP_P, SUBJ_P, OBJ_P, NOUN, ROOT, VERB_P]
-
-# all lexicon and their types
+# all areas
+AREAS = [LEX, DET, NOUN, ADJ, PREP, VERB, ADVERB, SUBJ, OBJ, PREP_P, OBJ_P, SUBJ_P, VERB_P, ROOT]
+# all lexicon and their part of speech types
 LEXEME_DICT = {
 		'det': ['the', 'those'], 
 		'noun': ['dogs', 'cats', 'mice', 'people', 'girls', 'bags', 'books', 'glasses'], 
@@ -50,8 +47,7 @@ LEXEME_DICT = {
 		# 'copula': ['are'],
 		}
 ALL_WORDS = [w for l in LEXEME_DICT.values() for w in l]
-print(f"ALL_WORDS: {ALL_WORDS}")
-
+# context free grammar for decoding
 CFG = {
 		ROOT: [SUBJ_P, VERB_P],
 		VERB_P: [VERB, OBJ_P, PREP_P, ADVERB],
@@ -69,6 +65,7 @@ CFG = {
 		}
 baseareas = [ADVERB, VERB, NOUN, DET, ADJ, PREP]
 FIBERS = [(a1, a2) for a1 in list(CFG.keys())[::-1] for a2 in CFG[a1]]
+print(f"ALL_WORDS: {ALL_WORDS}\nAREAS: {AREAS}\nFIBERS: {FIBERS}")
 
 def output_format(cfg=CFG):
 	outformat = []
@@ -85,7 +82,7 @@ def output_format(cfg=CFG):
 OUTPUT_FORMAT = output_format(CFG)
 print(f"OUTPUT_FORMAT: {OUTPUT_FORMAT}")
 
-def synthetic_readout(simulator, cfg=CFG, verbose=True):
+def synthetic_readout(simulator, cfg=CFG, verbose=False):
 	assembly_dict = copy.deepcopy(simulator.assembly_dict)
 	last_active_assembly = copy.deepcopy(simulator.last_active_assembly)
 	decoded = []
@@ -126,7 +123,7 @@ def translate(wordids, wordlist=ALL_WORDS):
 	return words
 
 def init_simulator_areas():
-	return AREAS, LEX, DET, FIBERS, ALL_WORDS, OUTPUT_FORMAT
+	return AREAS, LEX, FIBERS, ALL_WORDS, OUTPUT_FORMAT
 
 def get_action_idx(atuple, action_dict):
 	(aname, arg1, arg2) = atuple
@@ -334,24 +331,13 @@ def parse_det(action_dict):
 	action_tuples = [
 				[
 				("disinhibit_area", DET, None),
-				("disinhibit_area", SUBJ, None),
-				("disinhibit_area", OBJ, None),
-				("disinhibit_area", PREP_P, None),
 				("disinhibit_fiber", LEX, DET),
-				("disinhibit_fiber", DET, SUBJ),
-				("disinhibit_fiber", DET, OBJ),
-				("disinhibit_fiber", DET, PREP_P),
 				],
 
 				[("project_star", None, None),],
 
 				[
 				("inhibit_fiber", LEX, DET),
-				("disinhibit_fiber", SUBJ, ADJ),
-				("disinhibit_fiber", SUBJ, NOUN),
-				("disinhibit_fiber", OBJ, ADJ),
-				("disinhibit_fiber", OBJ, NOUN),
-				("disinhibit_fiber", PREP_P, NOUN),
 				],
 			]
 	return get_action_idxs(action_tuples, action_dict)
@@ -387,7 +373,7 @@ def parse_prep(action_dict):
 				[("project_star", None, None),],
 
 				[
-				("inhibit_fiber", LEX, PREP_P),
+				("inhibit_fiber", LEX, PREP),
 				("disinhibit_fiber", DET, PREP_P),
 				("disinhibit_fiber", NOUN, PREP_P),
 				],
@@ -455,7 +441,7 @@ def stimulate(source, destinations, assembly_dict, last_active_assembly):
 			stimulate_successes[idest] = True
 	return assembly_dict, last_active_assembly, stimulate_successes
 
-def sample_sentence(complexity, max_sentence_length):
+def sample_sentence(complexity, max_sentence_length, verbose=False):
 	# has to be a sentence with at least 1 noun and 1 verb
 	structures = [] 
 	assert complexity>=2, f"complexity ({complexity}) should be >=2"
@@ -501,7 +487,7 @@ def sample_sentence(complexity, max_sentence_length):
 		words.append(wid)
 		roles.append(rid)
 	assert len(roles)==len(words), f"len of roles {roles} should match words {words}"
-	print(f"sample sentence with complexity {complexity}, struct {struct},\nsentence: {sentence}")
+	print(f"sample sentence with complexity {complexity}, struct {struct},\nsentence: {sentence}") if verbose else 0
 	nwords = complexity # number of real words
 	if len(roles)<max_sentence_length: # pad empty positions at the end, if any
 		words += [-1]*(max_sentence_length-len(words))
@@ -522,7 +508,7 @@ def sample_episode(difficulty_mode, cur_curriculum_level, max_complexity, max_se
 	if difficulty_mode=='curriculum':
 		assert cur_curriculum_level!=None, f"requested curriculum but current level is not given"
 		if cur_curriculum_level==-1:
-			complexity = random.randint(1, max_complexity)
+			complexity = random.randint(2, max_complexity)
 		else:
 			assert 1 <= cur_curriculum_level <= max_complexity, f"should have 1<= cur_curriculum_level ({cur_curriculum_level}) <= {mmax_sentence_lengthax_input_length}"
 			population = list(range(2, max_complexity+1)) # possible number of words
@@ -533,7 +519,7 @@ def sample_episode(difficulty_mode, cur_curriculum_level, max_complexity, max_se
 			assert np.sum(weights)==1, f"weights {weights} should sum to 1"
 			complexity = random.choices(population=population, weights=weights, k=1)[0]
 	elif difficulty_mode=='uniform' or (type(difficulty_mode)==int and difficulty_mode==-1): 
-		complexity = random.randint(1, max_complexity)
+		complexity = random.randint(2, max_complexity)
 	elif difficulty_mode=='max': 
 		complexity = max_complexity
 	elif type(difficulty_mode)==int:
@@ -590,7 +576,7 @@ def expert_demo_language(simulator):
 		curwid = wid
 	return final_actions
 
-def synthetic_project(simulator, max_project_round=5, verbose=True):
+def synthetic_project(simulator, max_project_round=5, verbose=False):
 	'''
 	Strong project with symbolic assemblies.
 	'''
@@ -622,17 +608,24 @@ def synthetic_project(simulator, max_project_round=5, verbose=True):
 				if area2 != lexicon_area and area2opened and (area2 not in opened_areas):
 					opened_areas.append(area2)
 				# check eligibility of areas, can only be source if there exists last active assembly in the area
-				if (area1opened and area2opened) and (prev_last_active_assembly[area1] != -1) and (area2 != lexicon_area): # lex area cannot receive
-					receive_from[area2] = set([area1]).union(receive_from.get(area2, set())) # area1 as source, to destination area2
-				if (area1opened and area2opened) and (prev_last_active_assembly[area2] != -1) and (area1 != lexicon_area): # bidirectional, area2 can also be source
+				if (area1opened and area2opened) and (area1 != lexicon_area): #and (prev_last_active_assembly[area2] != -1): # lex area cannot receive
 					receive_from[area1] = set([area2]).union(receive_from.get(area1, set())) # area2 source, area1 destination
+				if (area1opened and area2opened) and (area2 != lexicon_area):# and (prev_last_active_assembly[area1] != -1): # bidirectional, area2 can also be source
+					receive_from[area2] = set([area1]).union(receive_from.get(area2, set())) # area1 as source, to destination area2
 		print(f'prev_assembly_dict: {prev_assembly_dict},\nprev_last_active_assembly: {prev_last_active_assembly},\nopened_areas: {opened_areas},\nreceive_from: {receive_from}') if verbose else 0
 		# Do project
 		assembly_dict = copy.deepcopy(prev_assembly_dict) # use assembly dict from prev round of project
 		last_active_assembly = copy.deepcopy(prev_last_active_assembly) # use last activated assembly from prev round of project
 		destinations = list(receive_from.keys())
-		for destination in destinations: # process every destination area
-			sources = list(receive_from[destination]) # all input sources
+		for area in simulator.all_areas: # process every destination area
+			if area not in destinations:
+				continue
+			destination = area
+			sources = []
+			for s in list(receive_from[destination]):
+				if prev_last_active_assembly[s]!=-1:
+					sources.append(s)
+			# sources = list(receive_from[destination]) # all input sources
 			sources_permutation = list(itertools.permutations(sources)) # permutation of the sources, list of tuples
 			active_assembly_id_in_destination = -1 # assume no matching connection exists by default
 			print(f'{destination} as destination') if verbose else 0
@@ -690,6 +683,8 @@ def synthetic_project(simulator, max_project_round=5, verbose=True):
 			assert len(assembly_dict[destination]) > active_assembly_id_in_destination, f"new_dest_id={active_assembly_id_in_destination} out of bound of assembly_dict[destination]: {assembly_dict[destination]}"
 			# reflect the newly activated destination assembly in source areas, update destination assembly dict if necessary
 			for source in sources:
+				if prev_last_active_assembly[source]==-1:
+					continue
 				print(f"\tchecking assembly dict for source {source}...") if verbose else 0
 				match = False # checks if prev_assembly_dict[source][prev_last_active_assembly[source]] contains any assembly in dest
 				for i, (A, a) in enumerate(zip(prev_assembly_dict[source][prev_last_active_assembly[source]][0], prev_assembly_dict[source][prev_last_active_assembly[source]][1])):
@@ -780,6 +775,8 @@ def synthetic_project(simulator, max_project_round=5, verbose=True):
 					assembly_dict[source][prev_last_active_assembly[source]][0].append(destination)
 					assembly_dict[source][prev_last_active_assembly[source]][1].append(active_assembly_id_in_destination)
 					print('\t\tsource dict added destination') if verbose else 0
+				prev_assembly_dict = assembly_dict ##
+				prev_last_active_assembly = last_active_assembly ##
 			# update the last activated assembly in destination
 			last_active_assembly[destination] = active_assembly_id_in_destination
 			print(f'\ttotal number of assemblies={new_num_assemblies}') if verbose else 0
@@ -788,6 +785,8 @@ def synthetic_project(simulator, max_project_round=5, verbose=True):
 			if len(opened_areas)==0:
 				all_visited = True
 				print('\tall_visited=True') if verbose else 0
+			prev_assembly_dict = assembly_dict
+			prev_last_active_assembly = last_active_assembly
 		# Current project round completes, update assembly dict
 		prev_assembly_dict = assembly_dict
 		prev_last_active_assembly = last_active_assembly

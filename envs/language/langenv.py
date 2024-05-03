@@ -37,7 +37,7 @@ class Simulator():
 				area_status = configurations['area_status'],
 				max_complexity = configurations['max_complexity'],
 				verbose=False):
-		self.all_areas, self.lexicon_area, self.det_area, self.all_fibers, self.all_words, self.output_format = utils.init_simulator_areas()
+		self.all_areas, self.lexicon_area, self.all_fibers, self.all_words, self.output_format = utils.init_simulator_areas()
 		self.max_sentence_length = len(self.output_format)
 		self.max_lexicon = len(self.all_words)
 		self.max_steps = max_steps # max steps allowed in episode
@@ -47,6 +47,7 @@ class Simulator():
 		self.verbose = verbose
 		self.area_status = area_status # area attributes to encode in state, default ['last_activated', 'num_lex_assemblies', 'num_total_assemblies']
 		self.max_complexity = max_complexity
+		self.num_fibers = len(self.all_fibers)
 		self.num_areas = len(self.all_areas)
 		self.action_dict = self.create_action_dictionary() 
 		self.num_actions = len(self.action_dict)
@@ -54,12 +55,8 @@ class Simulator():
 
 
 	def reset(self, difficulty_mode='uniform', cur_curriculum_level=None):
-		'''
-		Reset environment for new episode.
-		Return:
-			state: (numpy array with float32)
-			info: (any=None)
-		'''
+		import envs.language.cfg as config
+		cur_curriculum_level = config.configurations['curriculum']
 		self.num_words, self.goal, self.input_roles = utils.sample_episode(difficulty_mode=difficulty_mode, 
 														cur_curriculum_level=cur_curriculum_level, 
 														max_complexity=self.max_complexity,
@@ -69,7 +66,6 @@ class Simulator():
 													empty_unit=self.empty_unit, 
 													episode_max_reward=self.episode_max_reward)
 		self.state, self.action_to_statechange, self.area_to_stateidx, self.stateidx_to_fibername, self.assembly_dict, self.last_active_assembly = self.create_state_representation()
-		self.num_fibers = len(self.stateidx_to_fibername.keys())
 		self.just_projected = False # record if the previous action was project
 		self.all_correct = False # if the most recent readout has everything correct
 		self.correct_record = np.zeros_like(self.goal) # binary record for how many blocks are ever correct in the episode
@@ -164,28 +160,11 @@ class Simulator():
 				self.state[state_change_tuple[0]] = newlexid # update block id in state vec
 				self.last_active_assembly[self.lexicon_area] = newlexid # update the last active assembly
 			self.just_projected = False
-		# elif action_name == "clear_det": 
-		# 	if self.last_active_assembly[self.det_area]== -1: # BAD, already silenced
-		# 		assert self.state[area_to_stateidx[self.det_area]['last_activated']] == -1, \
-		# 		f"in state vector, the last activated assembly in det ({self.state[area_to_stateidx[self.head][0]]}) should already be -1 for repeative silence"
-		# 		reward -= self.action_cost
-		# 	else: # GOOD, valid clear
-		# 		self.last_active_assembly[self.det_area] = -1 # deactivate det
-		# 		readout = utils.synthetic_readout(self)
-		# 		units, self.all_correct, self.correct_record = utils.calculate_readout_reward(readout=readout, 
-		# 																					goal=self.goal, 
-		# 																					correct_record=self.correct_record, 
-		# 																					empty_unit=self.empty_unit)
-		# 		reward += units * self.unit_reward
-		# 		for sidx, sval in zip(state_change_tuple[0], state_change_tuple[1]):
-		# 			self.state[sidx] = sval # update state
-		# 	self.just_projected = False
 		else:
 			raise ValueError(f"\tError: action_idx {action_idx} is not recognized!")
 		self.current_time += 1 # increment step in the episode 
 		if self.current_time >= self.max_steps:
 			truncated = True
-		print(f"all correct {self.all_correct}")
 		terminated = self.all_correct # and utils.all_fiber_area_closed(self)
 		return self.state.copy(), reward, terminated, truncated, info
 
@@ -196,12 +175,13 @@ class Simulator():
 			state: (numpy array with float32)
 				state representation
 				[cur lex readout (initialized as all -1s),
-				input lex (padding -1 at the end),
-				input syntactic types (padding -1 at the end),
+				goal lex (padding with -1),
+				goal part of speech (padding -1 at the end),
 				fiber inhibition status (initialized as all closed 0s),
+				area inhibition status (initialized as all closed 0s),
 				last activated assembly idx in the area (initialized as all -1s), 
-				number of blocks-connected assemblies in each area (initialized as 0s, or max_lexicon for lexicon area),
-				number of all assemblies in each area (initialized as 0s, or max_lexicon for BLOCKS area),
+				number of lexicon-connected assemblies in each area (initialized as 0s, or max_lexicon for lexicon area),
+				number of all assemblies in each area (initialized as 0s, or max_lexicon for lexicon area),
 				]
 			action_to_statechange: (dict)
 				map action index to change in state vector
@@ -248,13 +228,13 @@ class Simulator():
 			area_to_stateidx["goalword"].append(state_vector_idx) # state idx for goal
 			state_vector_idx += 1 # increment state index
 		# encode goal sentence word types
-		area_to_stateidx["goaltype"] = []
+		area_to_stateidx["goalpos"] = []
 		for ib in range(self.max_sentence_length):
 			if self.input_roles[ib]==None:  # filler for nontype
 				state_vec.append(-1)
 			else:
 				state_vec.append(self.input_roles[ib])
-			area_to_stateidx["goaltype"].append(state_vector_idx) # state idx for goal
+			area_to_stateidx["goalpos"].append(state_vector_idx) # state idx for goal
 			state_vector_idx += 1 # increment state index
 		# encode fiber inhibition status
 		for (area1, area2) in self.all_fibers:
@@ -270,9 +250,8 @@ class Simulator():
 			assert self.action_dict[action_idx][0]=="inhibit_fiber" and self.action_dict[action_idx][1]==area1 and self.action_dict[action_idx][2]==area2, \
 					f"action_index {action_idx} should have (inhibit_fiber, {area1}, {area2}), but action_dict has {self.action_dict}"
 			action_to_statechange[action_idx] = ([state_vector_idx], 0) # close fiber
-			action_idx += 1
-			# increment state idx
-			state_vector_idx += 1
+			action_idx += 1 # increment action idx
+			state_vector_idx += 1 # increment state idx
 		for area in self.all_areas:
 			last_active_assembly[area] = -1 # initialize area with no activated assembly
 			assembly_dict[area] = [] # will become {area: [a_id 0[source a_name[A1, A2], source a_id [a1, a2]], 1[[A3], [a3]], 2[(A4, a4)], ...]}
@@ -330,11 +309,6 @@ class Simulator():
 		# action -> state change: activate previous block assembly
 		action_to_statechange[action_idx] = (area_to_stateidx[self.lexicon_area][self.area_status[0]], -1) 
 		action_idx += 1
-		# # action -> state change: clear det
-		# action_to_statechange[action_idx] = ([area_to_stateidx[self.det_area][self.area_status[0]], \
-		# 										area_to_stateidx[self.det_area][self.area_status[1]],
-		# 										area_to_stateidx[self.det_area][self.area_status[2]]],
-		# 									[-1, 0, 0])
 		# initialize assembly dict for lex area, other areas will be updated during project
 		assembly_dict[self.lexicon_area] = [[[],[]] for _ in range(self.max_lexicon)] 
 		return np.array(state_vec, dtype=np.float32), \
@@ -376,9 +350,6 @@ class Simulator():
 		idx += 1
 		dictionary[idx] = ("activate_lex", 'prev', None)
 		idx += 1
-		# # clear det
-		# dictionary[idx] = ("clear_det", None, None)
-		# idx += 1
 		return dictionary
 
 
@@ -424,16 +395,136 @@ def test_simulator(expert=True, repeat=1, verbose=False):
 
 
 
+class EnvWrapper(dm_env.Environment):
+	'''
+	Wraps a Simulator object to be compatible with dm_env.Environment
+	Reference: 
+		https://github.com/wcarvalho/human-sf/blob/da0c65d04be708199ffe48d5f5118b295bfd43a3/lib/dm_env_wrappers.py#L15
+		https://github.com/google-deepmind/dm_env/
+		https://github.com/google-deepmind/acme/
+	'''
+	def __init__(self, environment: Simulator):
+		self._environment = environment
+		self._reset_next_step = True
+		self._last_info = None
+		obs_space = self._environment.state
+		act_space = self._environment.num_actions-1 # maximum action index
+		self._observation_spec = _convert_to_spec(obs_space, name='observation')
+		self._action_spec = _convert_to_spec(act_space, name='action')
+	def reset(self) -> dm_env.TimeStep:
+		self._reset_next_step = False
+		observation, info = self._environment.reset()
+		self._last_info = info
+		return dm_env.restart(observation)
+	def step(self, action: types.NestedArray) -> dm_env.TimeStep:
+		if self._reset_next_step:
+			return self.reset()
+		observation, reward, done, truncated, info = self._environment.step(action)
+		self._reset_next_step = done or truncated
+		self._last_info = info
+		# Convert the type of the reward based on the spec, respecting the scalar or array property.
+		reward = tree.map_structure(
+			lambda x, t: (  # pylint: disable=g-long-lambda
+				t.dtype.type(x)
+				if np.isscalar(x) else np.asarray(x, dtype=t.dtype)),
+			reward,
+			self.reward_spec())
+		if truncated:
+			return dm_env.truncation(reward, observation)
+		if done:
+			return dm_env.termination(reward, observation)
+		return dm_env.transition(reward, observation)
+	def observation_spec(self) -> types.NestedSpec:
+		return self._observation_spec
+	def action_spec(self) -> types.NestedSpec:
+		return self._action_spec
+	def get_info(self) -> Optional[Dict[str, Any]]:
+		return self._last_info
+	@property
+	def environment(self) -> Simulator:
+		return self._environment
+	def __getattr__(self, name: str):
+		if name.startswith('__'):
+			raise AttributeError('attempted to get missing private attribute {}'.format(name))
+		return getattr(self._environment, name)
+	def close(self):
+		self._environment.close()
+		
+
+def _convert_to_spec(space: Any,
+					name: Optional[str] = None) -> types.NestedSpec:
+	"""
+	Converts a Python data structure to a dm_env spec or nested structure of specs.
+	The function supports scalars, numpy arrays, tuples, and dictionaries.
+	Args:
+		space: The data item to convert (can be scalar, numpy array, tuple, or dict).
+		name: Optional name to apply to the return spec.
+	Returns:
+		A dm_env spec or nested structure of specs, corresponding to the input item.
+	"""
+	if isinstance(space, int): # scalar int for max idx of an action
+		dtype = type(space)
+		min_val = 0 # minimum action index (inclusive)
+		max_val = space # maximum action index (inclusive)
+		try:
+			assert name=='action'
+		except:
+			raise ValueError('Converting integer to dm_env spec, but name is not action')
+		return specs.DiscreteArray(
+			num_values=max_val+1,
+			name=name
+		)
+	elif isinstance(space, np.ndarray): # observation/state
+		min_val, max_val = space.min(), configurations['max_assemblies']
+		try:
+			assert name=='observation'
+		except:	
+			raise ValueError("Converting np.ndarray to dm_env spec, but name is not 'observation'")
+		return specs.BoundedArray(
+			shape=space.shape,
+			dtype=space.dtype,
+			minimum=min_val,
+			maximum=max_val,
+			name=name
+		)
+	elif isinstance(space, tuple):
+		return tuple(_convert_to_spec(s, name) for s in space)
+	elif isinstance(space, dict):
+		return {
+			key: _convert_to_spec(value, key)
+			for key, value in space.items()		}
+	else:
+		raise ValueError('Unsupported data type for conversion to dm_env spec: {}'.format(space))
+	
+
+class Test(test_utils.EnvironmentTestMixin, absltest.TestCase):
+	def make_object_under_test(self):
+		environment = Simulator()
+		environment.reset()
+		return EnvWrapper(environment)
+	def make_action_sequence(self):
+		for _ in range(200):
+			yield self.make_action()
+
+
+
 '''
+salloc -p gpu_test -t 0-01:00 --mem=8000 --gres=gpu:1
+
 salloc -p test -t 0-01:00 --mem=200000 
 
-salloc -p gpu_test -t 0-01:00 --mem=8000 --gres=gpu:1
 module load python/3.10.12-fasrc01
 mamba activate neurorl
+
+python envs/language/langenv.py
 '''
 
 if __name__ == "__main__":
 
-	random.seed(1)
-	test_simulator(expert=True, repeat=100, verbose=True)
+	random.seed(6)
+
+	absltest.main()
+
+	test_simulator(expert=True, repeat=500, verbose=False)
+	test_simulator(expert=False, repeat=500, verbose=False)
 	

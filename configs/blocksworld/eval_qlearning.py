@@ -24,7 +24,7 @@ from acme import wrappers as acme_wrappers
 import dm_env
 from envs.blocksworld import plan
 
-import configs.plan_trainer as qltrainer
+import configs.blocksworld.train_plan_qlearning as qltrainer
 import envs.blocksworld.cfg as bwcfg
 from td_agents import q_learning
 import functools
@@ -1328,8 +1328,8 @@ if __name__ == "__main__":
         eval_test_puzzles=False, # whether to eval on 100 jBrain puzzles
         eval_num_stacks=False, fixed_num_blocks=4, # whether to vary num stacks while fixing num block
         eval_steps=False, max_oracle_steps=40, nsamples=500, # whether to eval on varying solution lengths
-        nrepeats=30, # num samples for all analyses except eval_steps
-        groupname='Qsparse3~10-2v8max5-10-7', # which model to load
+        nrepeats=200, # num samples for all analyses except eval_steps
+        groupname='Q3~10-2v8max5-10-7', # which model to load
       )
 
 '''
