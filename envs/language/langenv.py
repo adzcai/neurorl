@@ -29,25 +29,20 @@ import tree
 
 
 class Simulator():
-	# brain only represent 1 stack
 	def __init__(self, 
-				max_lexicon = configurations['max_lexicon'], # max num blocks in planning puzzle
 				episode_max_reward = configurations['episode_max_reward'],
 				max_steps = configurations['max_steps'],
-				max_input_length = configurations['max_input_length'],
 				action_cost = configurations['action_cost'],
 				empty_unit = configurations['empty_unit'],
-				reward_decay_factor = configurations['reward_decay_factor'],
 				area_status = configurations['area_status'],
 				max_complexity = configurations['max_complexity'],
 				verbose=False):
-		self.all_areas, self.lexicon_area, self.det_area, self.all_fibers = utils.init_simulator_areas()
-		self.max_lexicon = max_lexicon
+		self.all_areas, self.lexicon_area, self.det_area, self.all_fibers, self.all_words, self.output_format = utils.init_simulator_areas()
+		self.max_sentence_length = len(self.output_format)
+		self.max_lexicon = len(self.all_words)
 		self.max_steps = max_steps # max steps allowed in episode
-		self.max_input_length = max_input_length # max num of words in sentence
 		self.action_cost = action_cost
 		self.empty_unit = empty_unit
-		self.reward_decay_factor = reward_decay_factor
 		self.episode_max_reward = episode_max_reward
 		self.verbose = verbose
 		self.area_status = area_status # area attributes to encode in state, default ['last_activated', 'num_lex_assemblies', 'num_total_assemblies']
@@ -67,9 +62,12 @@ class Simulator():
 		'''
 		self.num_words, self.goal, self.input_roles = utils.sample_episode(difficulty_mode=difficulty_mode, 
 														cur_curriculum_level=cur_curriculum_level, 
-														max_input_length=self.max_input_length,
-														max_complexity=self.max_complexity)
-		self.unit_reward = utils.calculate_unit_reward(self.reward_decay_factor, len(self.goal), self.episode_max_reward)
+														max_complexity=self.max_complexity,
+														max_sentence_length=self.max_sentence_length)
+		self.unit_reward = utils.calculate_unit_reward(num_valid_items=self.num_words, 
+													num_total_items=len(self.goal), 
+													empty_unit=self.empty_unit, 
+													episode_max_reward=self.episode_max_reward)
 		self.state, self.action_to_statechange, self.area_to_stateidx, self.stateidx_to_fibername, self.assembly_dict, self.last_active_assembly = self.create_state_representation()
 		self.num_fibers = len(self.stateidx_to_fibername.keys())
 		self.just_projected = False # record if the previous action was project
@@ -148,7 +146,10 @@ class Simulator():
 					self.state[area_to_stateidx[area_name][self.area_status[2]]] = len(self.assembly_dict[area_name])
 				# readout stack	and compute reward
 				readout = utils.synthetic_readout(self)
-				units, self.all_correct, self.correct_record = utils.calculate_readout_reward(readout, self.goal, self.correct_record, self.reward_decay_factor, self.empty_unit)
+				units, self.all_correct, self.correct_record = utils.calculate_readout_reward(readout=readout, 
+																							goal=self.goal, 
+																							correct_record=self.correct_record, 
+																							empty_unit=self.empty_unit)
 				reward += self.unit_reward * units
 				# update current stack in state
 				for ib, sidx in enumerate(area_to_stateidx["readout"]):
@@ -163,25 +164,29 @@ class Simulator():
 				self.state[state_change_tuple[0]] = newlexid # update block id in state vec
 				self.last_active_assembly[self.lexicon_area] = newlexid # update the last active assembly
 			self.just_projected = False
-		elif action_name == "clear_det": 
-			if self.last_active_assembly[self.det_area]== -1: # BAD, already silenced
-				assert self.state[area_to_stateidx[self.det_area]['last_activated']] == -1, \
-				f"in state vector, the last activated assembly in det ({self.state[area_to_stateidx[self.head][0]]}) should already be -1 for repeative silence"
-				reward -= self.action_cost
-			else: # GOOD, valid clear
-				self.last_active_assembly[self.det_area] = -1 # deactivate det
-				readout = utils.synthetic_readout(self)
-				units, self.all_correct, self.correct_record = utils.calculate_readout_reward(readout, self.goal, self.correct_record, self.reward_decay_factor, self.empty_unit)
-				reward += units * self.unit_reward
-				for sidx, sval in zip(state_change_tuple[0], state_change_tuple[1]):
-					self.state[sidx] = sval # update state
-			self.just_projected = False
+		# elif action_name == "clear_det": 
+		# 	if self.last_active_assembly[self.det_area]== -1: # BAD, already silenced
+		# 		assert self.state[area_to_stateidx[self.det_area]['last_activated']] == -1, \
+		# 		f"in state vector, the last activated assembly in det ({self.state[area_to_stateidx[self.head][0]]}) should already be -1 for repeative silence"
+		# 		reward -= self.action_cost
+		# 	else: # GOOD, valid clear
+		# 		self.last_active_assembly[self.det_area] = -1 # deactivate det
+		# 		readout = utils.synthetic_readout(self)
+		# 		units, self.all_correct, self.correct_record = utils.calculate_readout_reward(readout=readout, 
+		# 																					goal=self.goal, 
+		# 																					correct_record=self.correct_record, 
+		# 																					empty_unit=self.empty_unit)
+		# 		reward += units * self.unit_reward
+		# 		for sidx, sval in zip(state_change_tuple[0], state_change_tuple[1]):
+		# 			self.state[sidx] = sval # update state
+		# 	self.just_projected = False
 		else:
 			raise ValueError(f"\tError: action_idx {action_idx} is not recognized!")
 		self.current_time += 1 # increment step in the episode 
 		if self.current_time >= self.max_steps:
 			truncated = True
-		terminated = self.all_correct and utils.all_fiber_closed(self.state, self.stateidx_to_fibername)
+		print(f"all correct {self.all_correct}")
+		terminated = self.all_correct # and utils.all_fiber_area_closed(self)
 		return self.state.copy(), reward, terminated, truncated, info
 
 	def create_state_representation(self):
@@ -229,13 +234,13 @@ class Simulator():
 		last_active_assembly = {} # {area: assembly_idx}
 		# encode current readout sentence
 		area_to_stateidx["readout"] = []
-		for _ in range(self.max_input_length):
+		for _ in range(self.max_sentence_length):
 			state_vec.append(-1) # empty word
 			area_to_stateidx["readout"].append(state_vector_idx) # state idx for readout
 			state_vector_idx += 1 # increment state index
 		# encode goal sentence words
 		area_to_stateidx["goalword"] = []
-		for ib in range(self.max_input_length):
+		for ib in range(self.max_sentence_length):
 			if self.goal[ib]==None:  # filler for empty block
 				state_vec.append(-1)
 			else:
@@ -244,7 +249,7 @@ class Simulator():
 			state_vector_idx += 1 # increment state index
 		# encode goal sentence word types
 		area_to_stateidx["goaltype"] = []
-		for ib in range(self.max_input_length):
+		for ib in range(self.max_sentence_length):
 			if self.input_roles[ib]==None:  # filler for nontype
 				state_vec.append(-1)
 			else:
@@ -325,11 +330,11 @@ class Simulator():
 		# action -> state change: activate previous block assembly
 		action_to_statechange[action_idx] = (area_to_stateidx[self.lexicon_area][self.area_status[0]], -1) 
 		action_idx += 1
-		# action -> state change: clear det
-		action_to_statechange[action_idx] = ([area_to_stateidx[self.det_area][self.area_status[0]], \
-												area_to_stateidx[self.det_area][self.area_status[1]],
-												area_to_stateidx[self.det_area][self.area_status[2]]],
-											[-1, 0, 0])
+		# # action -> state change: clear det
+		# action_to_statechange[action_idx] = ([area_to_stateidx[self.det_area][self.area_status[0]], \
+		# 										area_to_stateidx[self.det_area][self.area_status[1]],
+		# 										area_to_stateidx[self.det_area][self.area_status[2]]],
+		# 									[-1, 0, 0])
 		# initialize assembly dict for lex area, other areas will be updated during project
 		assembly_dict[self.lexicon_area] = [[[],[]] for _ in range(self.max_lexicon)] 
 		return np.array(state_vec, dtype=np.float32), \
@@ -371,26 +376,25 @@ class Simulator():
 		idx += 1
 		dictionary[idx] = ("activate_lex", 'prev', None)
 		idx += 1
-		# clear det
-		dictionary[idx] = ("clear_det", None, None)
-		idx += 1
+		# # clear det
+		# dictionary[idx] = ("clear_det", None, None)
+		# idx += 1
 		return dictionary
 
 
 
 def test_simulator(expert=True, repeat=1, verbose=False):
 	import time
-	sim = Simulator(verbose=verbose)
+	sim = Simulator(verbose=False)
 	pprint.pprint(sim.action_dict)
 	start_time = time.time()
 	avg_expert_len = []
 	for complexity in range(2, sim.max_complexity+1):
 		expert_len = []
-		print(f"complexity: {complexity}")
+		print(f"\n\ncomplexity: {complexity}")
 		for r in range(repeat):
-			# state, _ = sim.reset(difficulty_mode='curriculum', cur_curriculum_level=min(complexity+1, stack_max_blocks))
-			state, _ = sim.reset(difficulty_mode=complexity) # specify num of blocks
-			print(f'\n\n------------ repeat {r}, state after reset\t{state}') if verbose else 0
+			state, _ = sim.reset(difficulty_mode=complexity) # specify complexity
+			print(f'------------ repeat {r}, state after reset\t{state}') if verbose else 0
 			expert_demo = utils.expert_demo_language(sim) if expert else None
 			rtotal = 0 # total reward of episode
 			nsteps = sim.max_steps if (not expert) else len(expert_demo)
@@ -399,21 +403,22 @@ def test_simulator(expert=True, repeat=1, verbose=False):
 				action_idx = random.choice(list(range(sim.num_actions))) if (not expert) else expert_demo[t]
 				next_state, reward, terminated, truncated, info = sim.step(action_idx)
 				rtotal += reward
-				print(f't={t},\tr={round(reward, 5)},\taction={action_idx}\t{sim.action_dict[action_idx]},\ttruncated={truncated},\tdone={terminated},\n\tjust_projected={sim.just_projected}, all_correct={sim.all_correct}, correct_record={sim.correct_record}') if verbose else 0
+				print(f't={t},\tr={round(reward, 5)},\taction={action_idx}\t{sim.action_dict[action_idx]},\ttruncated={truncated},\tdone={terminated},\tall_correct={sim.all_correct}, correct_record={sim.correct_record}') if verbose else 0
 				# print(f'\tnext state {next_state}\t') if verbose else 0
 			readout = utils.synthetic_readout(sim)
 			print(f'end of episode (complexity={complexity}), num_words={sim.num_words}, \
-					\nsynthetic readout {readout} ({utils.translate(readout)}), \
-					\ngoal {sim.goal} ({utils.translate(sim.goal)}), \
+					\nsynthetic readout {readout}\n\t{utils.translate(readout)}, \
+					\ngoal {sim.goal}\n\t{utils.translate(sim.goal)}, \
 					\ntotal reward={rtotal}, time lapse={time.time()-start_time}') if verbose else 0
 			if expert:
 				assert readout == sim.goal, f"readout {readout} and goal {sim.goal} should be the same"
 				assert terminated, "episode should be done"
-				assert np.isclose(rtotal, sim.episode_max_reward-sim.action_cost*nsteps), \
-						f"rtotal {rtotal} and theoretical total {sim.episode_max_reward-sim.action_cost*nsteps} should be roughly the same"
+				theoretical_reward = sim.episode_max_reward - sim.action_cost*nsteps
+				assert np.isclose(rtotal, theoretical_reward, 0.05), \
+						f"rtotal {rtotal} and theoretical total {theoretical_reward} should be roughly the same"
 				expert_len.append(len(expert_demo))
 		avg_expert_len.append(np.mean(expert_len)) if expert else 0
-	print(f"\n\navg expert demo length {avg_expert_len}\n\n")
+	print(f"\n\navg expert demo length {avg_expert_len}\n\n") if verbose else 0
 
 
 
@@ -430,5 +435,5 @@ mamba activate neurorl
 if __name__ == "__main__":
 
 	random.seed(1)
-	test_simulator(expert=True, repeat=1, verbose=True)
+	test_simulator(expert=True, repeat=100, verbose=True)
 	

@@ -37,7 +37,7 @@ configurations = {
 	'empty_block_unit': 0.005, # reward unit to give for each correct empty block
 	'num_actions': None, # number of actions in the brain, will be filled once env is created
 	'action_dict': None, # action dict, will be filled once env is created
-	'curriculum': 3, # starting level, determine number of blocks in puzzle, in {0 (uniform), 2,..., puzzle_max_blocks}
+	'curriculum': 6, # starting level, determine number of blocks in puzzle, in {0 (uniform), 2,..., puzzle_max_blocks}
 	'leak': False, # whether to leak harder puzzles during curriculum
 	'compositional': False, # whether in compositional mode
 	'compositional_type': 'newblock', # {None, 'newblock', 'newconfig'}, if None: do not apply compositional training, 
