@@ -36,6 +36,9 @@ class Simulator():
 				empty_unit = configurations['empty_unit'],
 				area_status = configurations['area_status'],
 				max_complexity = configurations['max_complexity'],
+				compositional = configurations['compositional'],
+				compositional_eval = configurations['compositional_eval'],
+				compositional_holdout = configurations['compositional_holdout'],
 				verbose=False):
 		self.all_areas, self.lexicon_area, self.all_fibers, self.all_words, self.output_format = utils.init_simulator_areas()
 		self.max_sentence_length = len(self.output_format)
@@ -47,6 +50,9 @@ class Simulator():
 		self.verbose = verbose
 		self.area_status = area_status # area attributes to encode in state, default ['last_activated', 'num_lex_assemblies', 'num_total_assemblies']
 		self.max_complexity = max_complexity
+		self.compositional = compositional
+		self.compositional_eval = compositional_eval
+		self.compositional_holdout = compositional_holdout
 		self.num_fibers = len(self.all_fibers)
 		self.num_areas = len(self.all_areas)
 		self.action_dict = self.create_action_dictionary() 
@@ -60,7 +66,10 @@ class Simulator():
 		self.num_words, self.goal, self.input_roles = utils.sample_episode(difficulty_mode=difficulty_mode, 
 														cur_curriculum_level=cur_curriculum_level, 
 														max_complexity=self.max_complexity,
-														max_sentence_length=self.max_sentence_length)
+														max_sentence_length=self.max_sentence_length,
+														compositional=self.compositional,
+														compositional_eval=self.compositional_eval,
+														compositional_holdout=self.compositional_holdout)
 		self.unit_reward = utils.calculate_unit_reward(num_valid_items=self.num_words, 
 													num_total_items=len(self.goal), 
 													empty_unit=self.empty_unit, 
@@ -389,7 +398,7 @@ def test_simulator(expert=True, repeat=1, verbose=False):
 						f"rtotal {rtotal} and theoretical total {theoretical_reward} should be roughly the same"
 				expert_len.append(len(expert_demo))
 		avg_expert_len.append(np.mean(expert_len)) if expert else 0
-	print(f"\n\navg expert demo length {avg_expert_len}\n\n") if verbose else 0
+	print(f"\n\navg expert demo length {avg_expert_len}\n\n") 
 
 
 
@@ -523,8 +532,8 @@ if __name__ == "__main__":
 
 	random.seed(6)
 
-	absltest.main()
+	# absltest.main()
 
 	test_simulator(expert=True, repeat=500, verbose=False)
-	test_simulator(expert=False, repeat=500, verbose=False)
+	# test_simulator(expert=False, repeat=500, verbose=False)
 	

@@ -101,8 +101,8 @@ class Simulator(parse.Simulator):
 		if difficulty_mode == 'curriculum':
 			assert type(cur_curriculum_level)==int, f"difficulty_mode is curriculum but cur_curriculum_level is {cur_curriculum_level}"
 			nprocesses = self.__curriculum(cur_curriculum_level)
-		elif difficulty_mode != 'uniform':
-			assert type(difficulty_mode) == int and difficulty_mode>=0, f"difficulty_mode {difficulty_mode} should be int>=0"
+		elif difficulty_mode != 'uniform' and type(difficulty_mode)==int:
+			assert difficulty_mode>=0, f"difficulty_mode {difficulty_mode} should be int>=0"
 			nprocesses = difficulty_mode
 		if (self.num_blocks==self.stack_max_blocks) and (nprocesses==0):
 			nprocesses = 1 # full stack, need at least 1 process

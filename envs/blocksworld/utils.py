@@ -1053,14 +1053,15 @@ def sample_random_puzzle(puzzle_max_stacks, puzzle_max_blocks, stack_max_blocks,
 		goal_stacks: (list of list)
 	'''
 	assert puzzle_num_blocks==None or (type(puzzle_num_blocks)==int and 2<=puzzle_num_blocks<=puzzle_max_blocks)
-	while True:
+	keep_sampling = True
+	while keep_sampling:
 		puzzle_num_blocks = random.choice(list(range(2, puzzle_max_blocks+1))) if (puzzle_num_blocks==None and curriculum==None) else puzzle_num_blocks
 		if puzzle_num_blocks==None and curriculum!=None: # sample from curriculum
 			assert 0==curriculum or (2 <= curriculum <= puzzle_max_blocks), f"should have 2 <= curriculum ({curriculum}) <= {puzzle_max_blocks}"
 			if curriculum==0: # uniform
 				puzzle_num_blocks = random.choice(list(range(2, puzzle_max_blocks+1)))
 			else:
-				if compositional and compositional_type=='newblock':
+				if compositional and compositional_type=='newblock': # adjust max blocks
 					curriculum = min(curriculum, puzzle_max_blocks-len(compositional_holdout))
 				population = list(range(2, puzzle_max_blocks+1)) # possible number of blocks in puzzle
 				weights = np.zeros_like(population, dtype=np.float32)
@@ -1152,12 +1153,26 @@ def sample_random_puzzle(puzzle_max_stacks, puzzle_max_blocks, stack_max_blocks,
 					break # no more remaining blocks available, done		
 		assert (len(input_stacks) <= puzzle_max_stacks) and (len(goal_stacks) <= puzzle_max_stacks),\
 			f"puzzle input {input_stacks} and goal {goal_stacks} should each have fewer than {puzzle_max_stacks} stacks"
-		# found valid puzzle config, return
+		# check if puzzle does not overlap with test_puzzles
 		if (input_stacks != goal_stacks):
-			if ([input_stacks, goal_stacks] not in test_puzzles.test_puzzles):
-				return puzzle_num_blocks, input_stacks, goal_stacks
+			if [input_stacks, goal_stacks] in test_puzzles.test_puzzles:
+				print(f"\n\nProposed puzzle [ {input_stacks}, {goal_stacks} ] overlaps with test puzzle, keep sampling.\n\n")
 			else:
-				print(f"\n\nProposed puzzle [ {input_stacks}, {goal_stacks} ] overlaps with test puzzle, skip.\n\n")
-
+				keep_sampling = False
+		# check if goal stacks satisfy compositional requirement
+		if compositional and compositional_type=='newconfig':
+			gslengths = [len(s) for s in goal_stacks] # lengths of goal stacks
+			if not compositional_eval: # training mode, should avoid holdout config
+				if gslengths not in compositional_holdout:
+					keep_sampling = False
+				else:
+					keep_sampling = True
+					print(f"checking goal stack lengths {gslengths}, keep sample? {keep_sampling}")
+			else: # eval mode, only return compositional holdout
+				if gslengths not in compositional_holdout:
+					keep_sampling = True
+				else:
+					keep_sampling = False
+	return puzzle_num_blocks, input_stacks, goal_stacks
 
 

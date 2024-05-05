@@ -44,15 +44,14 @@ LEXEME_DICT = {
 		'adj': ['big', 'sad', 'cute', 'curious'], 
 		'intransverb': ['run', 'fly', 'roll'], 
 		'adv': ['quickly', 'slowly', 'slightly'], 
-		# 'copula': ['are'],
 		}
 ALL_WORDS = [w for l in LEXEME_DICT.values() for w in l]
 # context free grammar for decoding
 CFG = {
 		ROOT: [SUBJ_P, VERB_P],
 		VERB_P: [VERB, OBJ_P, PREP_P, ADVERB],
-		SUBJ_P: [SUBJ], # [SUBJ, PREP_P],
-		OBJ_P: [OBJ], # [OBJ, PREP_P],
+		SUBJ_P: [SUBJ], 
+		OBJ_P: [OBJ], 
 		PREP_P: [PREP, DET, NOUN],
 		SUBJ: [DET, ADJ, NOUN],
 		OBJ: [DET, ADJ, NOUN],
@@ -289,24 +288,6 @@ def parse_intransverb(action_dict):
 			]
 	return get_action_idxs(action_tuples, action_dict)
 
-def parse_copula(action_dict):
-	action_tuples = [
-				[
-				("disinhibit_fiber", LEX, VERB),
-				("disinhibit_fiber", VERB, SUBJ),
-				],
-
-				[("project_star", None, None),],
-
-				[
-				("inhibit_fiber", LEX, VERB),
-				("disinhibit_fiber", ADJ, VERB),
-				("disinhibit_area", OBJ, None), #
-				("inhibit_area", SUBJ, None), #
-				],
-				]
-	return get_action_idxs(action_tuples, action_dict)
-
 def parse_adverb(action_dict):
 	action_tuples = [
 				[
@@ -441,12 +422,15 @@ def stimulate(source, destinations, assembly_dict, last_active_assembly):
 			stimulate_successes[idest] = True
 	return assembly_dict, last_active_assembly, stimulate_successes
 
-def sample_sentence(complexity, max_sentence_length, verbose=False):
-	# has to be a sentence with at least 1 noun and 1 verb
+def sample_sentence(complexity, max_sentence_length, compositional, compositional_eval, compositional_holdout, verbose=False):
+	'''
+	Has to be a sentence with at least 1 noun and 1 verb
+		[DET, ADJ, NOUN, VERB, DET, ADJ, NOUN, PREP, DET, NOUN, ADVERB]
+		['det', 'adj', 'noun', 'transverb' or 'intransverb', 'det', 'adj', 'noun', 'prep', 'det', 'noun', 'adv']
+	Return: number of real words in the sentence, word ids, partr of speech ids
+	'''	
 	structures = [] 
 	assert complexity>=2, f"complexity ({complexity}) should be >=2"
-	# [DET, ADJ, NOUN, VERB, DET, ADJ, NOUN, PREP, DET, NOUN, ADVERB]
-	# ['det', 'adj', 'noun', 'transverb' or 'intransverb', 'det', 'adj', 'noun', 'prep', 'det', 'noun', 'adv']
 	if complexity==2:
 		structures = [
 					[-1,-1,'noun', 'intransverb', -1,-1,-1, -1,-1,-1, -1],
@@ -465,14 +449,119 @@ def sample_sentence(complexity, max_sentence_length, verbose=False):
 					[-1,-1,'noun', 'transverb', 'det',-1,'noun', -1,-1,-1,-1],
 					[-1,-1,'noun', 'transverb', -1,'adj','noun', -1,-1,-1,-1],
 					[-1,-1,'noun', 'transverb', -1,-1,'noun', -1,-1,-1,'adv'],
-
 					['det','adj','noun', 'intransverb', -1,-1,-1, -1,-1,-1, -1],
 					['det',-1,'noun', 'intransverb', -1,-1,-1, -1,-1,-1, 'adv'],
 					[-1,'adj','noun', 'intransverb', -1,-1,-1, -1,-1,-1, 'adv'],
 					[-1,-1,'noun', 'intransverb', -1,-1,-1, 'prep',-1,'noun', -1],
 					]
-	struct = random.choice(structures) # choose a random sentence structure
-	words, roles = [], [] # word ids, role ids
+	elif complexity==5:
+		structures = [
+					['det','adj','noun', 'transverb', -1,-1,'noun', -1,-1,-1,-1],
+					['det',-1,'noun', 'transverb', 'det',-1,'noun', -1,-1,-1,-1],
+					['det',-1,'noun', 'transverb', -1,'adj','noun', -1,-1,-1,-1],
+					['det',-1,'noun', 'transverb', -1,-1,'noun', -1,-1,-1,'adv'],
+					[-1,'adj','noun', 'transverb', 'det',-1,'noun', -1,-1,-1,-1],
+					[-1,'adj','noun', 'transverb', -1,'adj','noun', -1,-1,-1,-1],
+					[-1,'adj','noun', 'transverb', -1,-1,'noun', -1,-1,-1,'adv'],
+					[-1,-1,'noun', 'transverb', 'det','adj','noun', -1,-1,-1,-1],
+					[-1,-1,'noun', 'transverb', 'det',-1,'noun', -1,-1,-1,'adv'],
+					[-1,-1,'noun', 'transverb', -1,'adj','noun', -1,-1,-1,'adv'],
+					[-1,-1,'noun', 'transverb', -1,-1,'noun', 'prep',-1,'noun',-1],
+					['det','adj','noun', 'intransverb', -1,-1,-1, -1,-1,-1, 'adv'],
+					['det',-1,'noun', 'intransverb', -1,-1,-1, 'prep',-1,'noun', -1],
+					[-1,'adj','noun', 'intransverb', -1,-1,-1, 'prep',-1,'noun', -1],
+					[-1,-1,'noun', 'intransverb', -1,-1,-1, 'prep','det','noun', -1],
+					[-1,-1,'noun', 'intransverb', -1,-1,-1, 'prep',-1,'noun', 'adv'],
+					]
+	elif complexity==6:
+		structures = [
+					['det','adj','noun', 'transverb', 'det',-1,'noun', -1,-1,-1,-1],
+					['det','adj','noun', 'transverb', -1,'adj','noun', -1,-1,-1,-1],
+					['det','adj','noun', 'transverb', -1,-1,'noun', -1,-1,-1,'adv'],
+					['det',-1,'noun', 'transverb', 'det','adj','noun', -1,-1,-1,-1],
+					['det',-1,'noun', 'transverb', 'det',-1,'noun', -1,-1,-1,'adv'],
+					['det',-1,'noun', 'transverb', -1,'adj','noun', -1,-1,-1,'adv'],
+					[-1,'adj','noun', 'transverb', 'det',-1,'noun', -1,-1,-1,'adv'],
+					[-1,'adj','noun', 'transverb', 'det','adj','noun', -1,-1,-1,-1],
+					[-1,'adj','noun', 'transverb', -1,'adj','noun', -1,-1,-1,'adv'],
+					[-1,'adj','noun', 'transverb', -1,-1,'noun', 'prep',-1,'noun',-1],
+					[-1,-1,'noun', 'transverb', 'det','adj','noun', -1,-1,-1,'adv'],
+					[-1,-1,'noun', 'transverb', 'det',-1,'noun', 'prep',-1,'noun',-1],
+					[-1,-1,'noun', 'transverb', -1,'adj','noun', 'prep',-1,'noun',-1],
+					[-1,-1,'noun', 'transverb', -1,-1,'noun', 'prep','det','noun',-1],
+					[-1,-1,'noun', 'transverb', -1,-1,'noun', 'prep',-1,'noun','adv'],
+					['det','adj','noun', 'intransverb', -1,-1,-1, 'prep',-1,'noun', -1],
+					['det',-1,'noun', 'intransverb', -1,-1,-1, 'prep','det','noun', -1],
+					['det',-1,'noun', 'intransverb', -1,-1,-1, 'prep',-1,'noun', 'adv'],
+					[-1,'adj','noun', 'intransverb', -1,-1,-1, 'prep','det','noun', -1],
+					[-1,'adj','noun', 'intransverb', -1,-1,-1, 'prep',-1,'noun', 'adv'],
+					[-1,-1,'noun', 'intransverb', -1,-1,-1, 'prep','det','noun', 'adv'],
+					]
+	elif complexity==7:
+		structures = [
+					['det','adj','noun', 'transverb', 'det','adj','noun', -1,-1,-1,-1],
+					['det','adj','noun', 'transverb', 'det',-1,'noun', -1,-1,-1,'adv'],
+					['det','adj','noun', 'transverb', -1,'adj','noun', -1,-1,-1,'adv'],
+					['det','adj','noun', 'transverb', -1,-1,'noun', 'prep',-1,'noun',-1],
+					['det',-1,'noun', 'transverb', 'det','adj','noun', -1,-1,-1,'adv'],
+					['det',-1,'noun', 'transverb', 'det',-1,'noun', 'prep',-1,'noun',-1],
+					['det',-1,'noun', 'transverb', -1,'adj','noun', 'prep',-1,'noun',-1],
+					['det',-1,'noun', 'transverb', -1,-1,'noun', 'prep','det','noun',-1],
+					['det',-1,'noun', 'transverb', -1,-1,'noun', 'prep',-1,'noun','adv'],
+					[-1,'adj','noun', 'transverb', 'det','adj','noun', -1,-1,-1,'adv'],
+					[-1,'adj','noun', 'transverb', 'det',-1,'noun', 'prep',-1,'noun',-1],
+					[-1,'adj','noun', 'transverb', -1,'adj','noun', 'prep',-1,'noun',-1],
+					[-1,'adj','noun', 'transverb', -1,-1,'noun', 'prep','det','noun',-1],
+					[-1,'adj','noun', 'transverb', -1,-1,'noun', 'prep',-1,'noun','adv'],
+					[-1,-1,'noun', 'transverb', 'det',-1,'noun', 'prep',-1,'noun','adv'],
+					[-1,-1,'noun', 'transverb', 'det',-1,'noun', 'prep','det','noun',-1],
+					[-1,-1,'noun', 'transverb', -1,'adj','noun', 'prep',-1,'noun','adv'],
+					[-1,-1,'noun', 'transverb', -1,'adj','noun', 'prep','det','noun',-1],
+					[-1,-1,'noun', 'transverb', -1,-1,'noun', 'prep','det','noun','adv'],
+					['det','adj','noun', 'intransverb', -1,-1,-1, 'prep','det','noun', -1],
+					['det','adj','noun', 'intransverb', -1,-1,-1, 'prep',-1,'noun', 'adv'],
+					['det',-1,'noun', 'intransverb', -1,-1,-1, 'prep','det','noun', 'adv'],
+					[-1,'adj','noun', 'intransverb', -1,-1,-1, 'prep','det','noun', 'adv'],
+					]
+	elif complexity==8:
+		structures = [
+					['det','adj','noun', 'transverb', 'det','adj','noun', -1,-1,-1,'adv'],
+					['det','adj','noun', 'transverb', 'det',-1,'noun', 'prep',-1,'noun',-1],
+					['det','adj','noun', 'transverb', -1,'adj','noun', 'prep',-1,'noun',-1],
+					['det','adj','noun', 'transverb', -1,-1,'noun', 'prep',-1,'noun','adv'],
+					['det','adj','noun', 'transverb', -1,-1,'noun', 'prep','det','noun',-1],
+					['det',-1,'noun', 'transverb', 'det','adj','noun', 'prep',-1,'noun',-1],
+					['det',-1,'noun', 'transverb', 'det',-1,'noun', 'prep','det','noun',-1],
+					['det',-1,'noun', 'transverb', 'det',-1,'noun', 'prep',-1,'noun','adv'],
+					['det',-1,'noun', 'transverb', -1,'adj','noun', 'prep','det','noun',-1],
+					['det',-1,'noun', 'transverb', -1,'adj','noun', 'prep',-1,'noun','adv'],
+					['det',-1,'noun', 'transverb', -1,-1,'noun', 'prep','det','noun','adv'],
+					[-1,'adj','noun', 'transverb', 'det','adj','noun', 'prep',-1,'noun',-1],
+					[-1,'adj','noun', 'transverb', 'det',-1,'noun', 'prep','det','noun',-1],
+					[-1,'adj','noun', 'transverb', 'det',-1,'noun', 'prep',-1,'noun','adv'],
+					[-1,'adj','noun', 'transverb', -1,'adj','noun', 'prep','det','noun',-1],
+					[-1,'adj','noun', 'transverb', -1,'adj','noun', 'prep',-1,'noun','adv'],
+					[-1,'adj','noun', 'transverb', -1,-1,'noun', 'prep','det','noun','adv'],
+					[-1,-1,'noun', 'transverb', 'det','adj','noun', 'prep',-1,'noun','adv'],
+					[-1,-1,'noun', 'transverb', 'det','adj','noun', 'prep','det','noun',-1],
+					[-1,-1,'noun', 'transverb', 'det',-1,'noun', 'prep','det','noun','adv'],
+					[-1,-1,'noun', 'transverb', -1,'adj','noun', 'prep','det','noun','adv'],
+					['det','adj','noun', 'intransverb', -1,-1,-1, 'prep','det','noun', 'adv'],
+					]
+	if compositional and compositional_eval:
+		assert complexity>3, f"there is no holdout structures to eval in compleixty 2,3, complexity ({complexity}) should be >3"
+	keep_sampling = True
+	while keep_sampling:
+		struct = random.choice(structures) # choose a random sentence structure
+		if not compositional: 
+			keep_sampling = False
+		elif compositional_eval: # comp and eval
+			if struct in compositional_holdout:
+				keep_sampling = False
+		else: # comp and train
+			if struct not in compositional_holdout:
+				keep_sampling = False
+	words, poss = [], [] # word ids, part of speech ids
 	sentence = ""
 	for r in struct:
 		w = "_, "
@@ -485,16 +574,16 @@ def sample_sentence(complexity, max_sentence_length, verbose=False):
 			w += ", "
 		sentence += w
 		words.append(wid)
-		roles.append(rid)
-	assert len(roles)==len(words), f"len of roles {roles} should match words {words}"
+		poss.append(rid)
+	assert len(poss)==len(words), f"len of poss {poss} should match words {words}"
 	print(f"sample sentence with complexity {complexity}, struct {struct},\nsentence: {sentence}") if verbose else 0
 	nwords = complexity # number of real words
-	if len(roles)<max_sentence_length: # pad empty positions at the end, if any
+	if len(poss)<max_sentence_length: # pad empty positions at the end, if any
 		words += [-1]*(max_sentence_length-len(words))
-		roles += [-1]*(max_sentence_length-len(roles))
-	return nwords, words, roles
+		poss += [-1]*(max_sentence_length-len(poss))
+	return nwords, words, poss
 
-def sample_episode(difficulty_mode, cur_curriculum_level, max_complexity, max_sentence_length=len(OUTPUT_FORMAT)):
+def sample_episode(difficulty_mode, cur_curriculum_level, max_complexity, max_sentence_length, compositional, compositional_eval, compositional_holdout):
 	'''
 	Create a goal sentence for the episode
 	Input
@@ -530,7 +619,8 @@ def sample_episode(difficulty_mode, cur_curriculum_level, max_complexity, max_se
 		raise ValueError(f"unrecognized difficulty mode {difficulty_mode} (type {type(difficulty_mode)})")
 	assert complexity <= max_sentence_length, \
 		f"number of actual words {complexity} should be smaller than max_sentence_length {max_sentence_length}"
-	num_words, goal, roles = sample_sentence(complexity, max_sentence_length) 
+	assert max_sentence_length==len(OUTPUT_FORMAT), f"max_sentence_length {max_sentence_length} should be {len(OUTPUT_FORMAT)}"
+	num_words, goal, roles = sample_sentence(complexity=complexity, max_sentence_length=max_sentence_length, compositional=compositional, compositional_eval=compositional_eval, compositional_holdout=compositional_holdout) 
 	return num_words, goal, roles
 
 

@@ -5,7 +5,7 @@ module load python/3.10.12-fasrc01
 mamba activate neurorl
 
 // launch parallel job
-python configs/parse_trainer.py \
+python configs/blocksworld/train_parse.py \
   --search='initial' \
   --parallel='sbatch' \
   --num_actors=1 \
@@ -17,7 +17,7 @@ python configs/parse_trainer.py \
   --time=0-72:00:00 
 
 // test in interactive session
-python configs/parse_trainer.py \
+python configs/blocksworld/train_parse.py \
   --search='initial' \
   --parallel='none' \
   --run_distributed=True \
@@ -68,7 +68,7 @@ plotfreq = 50000 # frequency to plot action trajectory
 UP_PRESSURE_THRESHOLD = 5 # pressure threshold to increase curriculum
 DOWN_PRESSURE_THRESHOLD = 10 # pressure threshold to decrease curriculum
 UP_REWARD_THRESHOLD = 0.8 # upper reward threshold for incrementing up pressure
-DOWN_REWARD_THRESHOLD = 0.5 # lower reward threshold for incrementing down pressure
+DOWN_REWARD_THRESHOLD = -2#0.5 # lower reward threshold for incrementing down pressure
 up_pressure = 0 # initial up pressure
 down_pressure = 0 # initial down pressure
 
@@ -672,7 +672,7 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['pa1~105v8max10-7']),
+            "group": tune.grid_search(['parse5+5v-2max10-7']),
             "num_steps": tune.grid_search([500e6]),
 
             "samples_per_insert": tune.grid_search([20.0]),

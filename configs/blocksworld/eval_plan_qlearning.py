@@ -24,17 +24,15 @@ from acme import wrappers as acme_wrappers
 import dm_env
 from envs.blocksworld import plan
 
-import configs.blocksworld.train_plan_muzero as muzerotrainer 
+import configs.blocksworld.train_plan_qlearning as qltrainer
 import envs.blocksworld.cfg as bwcfg
-from td_agents import muzero
+from td_agents import q_learning
 import functools
-import mctx
 import library.utils as utils
 import envs.blocksworld.utils as bwutils
 
 import haiku as hk
 import jax.numpy as jnp
-
 
 def load_config(filename):
   with open(filename, 'rb') as fp:
@@ -124,7 +122,8 @@ def get_dirs_ckpts(seed_path: str):
   return dirs, ckpts
 
 def reload(checkpointer, seed_path, use_latest: bool = True):
-  # get all directories from year, load checkpoint
+  # get all directories from year
+  # load checkpoint
   _, ckpts = get_dirs_ckpts(seed_path)
   ckpts.sort()
   assert use_latest, 'need to implement otherwise'
@@ -139,7 +138,7 @@ def load_settings(
   base_dir: str = None,
   run: str = None,
   seed_path: str = None):
-  if seed_path is None: 
+  if seed_path is None: # seed_path = "/n/home04/yichenli/rl_results/initial/runs-2024.04.19-16.57/"
     assert base_dir is not None and run is not None, 'set values for finding path'
     seed_path = glob(os.path.join(base_dir, run, '*'))[0]
   config_file = os.path.join(seed_path, 'config.pkl')
@@ -147,6 +146,7 @@ def load_settings(
   final_agent_config = config
   final_env_config = {}
   return seed_path, final_env_config, final_agent_config
+
 
 
 def make_test_environment(
@@ -190,9 +190,8 @@ def make_test_environment(
   ]
   return acme_wrappers.wrap_all(env, wrapper_list), sim
 
-
 def main(
-        eval_lvls, lvls, 
+        eval_lvls, lvls,
         eval_blocks, fixed_num_stacks,
         puzzle_max_stacks, 
         puzzle_max_blocks, 
@@ -232,7 +231,7 @@ def main(
       run='.')
 
 
-    config = muzero.Config(**agent_kwargs)
+    config = q_learning.Config(**agent_kwargs)
 
     def tmp_obs_encoder(
         inputs: acme_wrappers.observation_action_reward.OAR,
@@ -285,28 +284,28 @@ def main(
         fn = jax.vmap(fn)
       return fn(inputs)
 
-    muzerotrainer.observation_encoder = lambda inputs, num_actions: tmp_obs_encoder(inputs=inputs,num_actions=num_actions)
+    qltrainer.observation_encoder = lambda inputs, num_actions: tmp_obs_encoder(inputs=inputs, num_actions=num_actions)
 
 
     if eval_lvls and len(lvls)>0:
-      modelsolved = [] # ratio of puzzles solved
-      modelsolvedsem = [] 
+      qlsolved = [] # ratio of puzzles solved
+      qlsolvedsem = [] 
       oraclesolved = []
       oraclesolvedsem = []
       heuristicsolved = []
       heuristicsolvedsem = []
       randomsolved = []
       randomsolvedsem = []
-      modelreward = [] # avg episode reward
-      modelrewardsem = []
+      qlreward = [] # avg episode reward
+      qlrewardsem = []
       oraclereward = []
       oraclerewardsem = []
       heuristicreward = []
       heuristicrewardsem = []
       randomreward = []
       randomrewardsem = []
-      modelsteps = [] # num of steps for solving a puzzle 
-      modelstepssem = []
+      qlsteps = [] # num of steps for solving a puzzle 
+      qlstepssem = []
       oraclesteps = []
       oraclestepssem = []
       heuristicsteps = [] # num of steps for solving a puzzle
@@ -325,60 +324,38 @@ def main(
                                         compositional_type=compositional_type, compositional_holdout=compositional_holdout,
                                         test_puzzle=None,
                                         )
-        mcts_policy = functools.partial(
-          mctx.gumbel_muzero_policy,
-          max_depth=config.max_sim_depth,
-          num_simulations=config.num_simulations,
-          gumbel_scale=config.gumbel_scale)
-        discretizer = utils.Discretizer(
-                      num_bins=config.num_bins,
-                      max_value=config.max_scalar_value,
-                      tx_pair=config.tx_pair,
-                  )
+        action_dict = bwcfg.configurations['plan']['action_dict']
         builder = basics.Builder(
           config=config,
-          get_actor_core_fn=functools.partial(
-              muzero.get_actor_core,
-              evaluation=True,
-              mcts_policy=mcts_policy,
-              discretizer=discretizer,
-          ),
           ActorCls=functools.partial(
             basics.BasicActor,
-            observers=[muzerotrainer.MuObserver(period=100000)],
+            observers=[qltrainer.QObserver(period=1000000)],
             ),
-          optimizer_cnstr=muzero.muzero_optimizer_constr,
-          LossFn=muzero.MuZeroLossFn(
-              discount=config.discount,
-              importance_sampling_exponent=config.importance_sampling_exponent,
-              burn_in_length=config.burn_in_length,
-              max_replay_size=config.max_replay_size,
-              max_priority_weight=config.max_priority_weight,
-              bootstrap_n=config.bootstrap_n,
-              discretizer=discretizer,
-              mcts_policy=mcts_policy,
-              simulation_steps=config.simulation_steps,
-              reanalyze_ratio=0.25, 
-              root_policy_coef=config.root_policy_coef,
-              root_value_coef=config.root_value_coef,
-              model_policy_coef=config.model_policy_coef,
-              model_value_coef=config.model_value_coef,
-              model_reward_coef=config.model_reward_coef,
+          get_actor_core_fn=functools.partial(
+            basics.get_actor_core,
+            evaluation=True,
+          ),
+          LossFn=q_learning.R2D2LossFn(
+            discount=config.discount,
+            importance_sampling_exponent=config.importance_sampling_exponent,
+            burn_in_length=config.burn_in_length,
+            max_replay_size=config.max_replay_size,
+            max_priority_weight=config.max_priority_weight,
+            bootstrap_n=config.bootstrap_n,
           ))
-        network_factory = functools.partial(muzerotrainer.make_muzero_networks, config=config)
+        network_factory = functools.partial(qltrainer.make_qlearning_networks, config=config)
         load_outputs = load_agent(
-          env=env,
-          config=config,
-          builder=builder,
-          network_factory=network_factory,
-          seed_path=seed_path,
-          use_latest=True,
-          evaluation=True)
-        reload(load_outputs.checkpointer, seed_path) # can use this to load in latest checkpoints
-        action_dict = bwcfg.configurations['plan']['action_dict']
+                                env=env,
+                                config=config,
+                                builder=builder,
+                                network_factory=network_factory,
+                                seed_path=seed_path,
+                                use_latest=True,
+                                evaluation=True)
+        reload(load_outputs.checkpointer, seed_path)
 
         print(f"\n----------------------- Evaluating lvl {lvl}")
-        print(f"Muzero {groupname}")
+        print(f"Qlearning {groupname}")
         lvlsteps = [] # num steps for successful puzzles
         lvlepsr = [] # episode reward
         lvlsolved = [] # whether the puzzle is solved
@@ -413,12 +390,12 @@ def main(
         print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
                 \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})\
                 \n\tavg steps {round(np.mean(lvlsteps), 6)} (sem={round(sem(lvlsteps), 6)})")
-        modelsolved.append(round(np.mean(lvlsolved),6))
-        modelsolvedsem.append(round(sem(lvlsolved),6))
-        modelreward.append(round(np.mean(lvlepsr),6))
-        modelrewardsem.append(round(sem(lvlepsr),6))
-        modelsteps.append(round(np.nanmean(lvlsteps), 6))
-        modelstepssem.append(round(sem(lvlsteps, nan_policy="omit"), 6))
+        qlsolved.append(round(np.mean(lvlsolved),6))
+        qlsolvedsem.append(round(sem(lvlsolved),6))
+        qlreward.append(round(np.mean(lvlepsr),6))
+        qlrewardsem.append(round(sem(lvlepsr),6))
+        qlsteps.append(round(np.nanmean(lvlsteps), 6))
+        qlstepssem.append(round(sem(lvlsteps, nan_policy="omit"), 6))
 
         print(f"Oracle")
         lvlsolved = []
@@ -506,35 +483,35 @@ def main(
         randomsteps.append(round(np.nanmean(lvlsteps), 6))
         randomstepssem.append(round(sem(lvlsteps, nan_policy="omit"), 6))
 
-      print(f"modelsolved={modelsolved}\nmodelsolvedsem={modelsolvedsem}\
+      print(f"qlsolved={qlsolved}\nqlsolvedsem={qlsolvedsem}\
           \noraclesolved={oraclesolved}\noraclesolvedsem={oraclesolvedsem}\
           \nheuristicsolved={heuristicsolved}\nheuristicsolvedsem={heuristicsolvedsem}\
           \nrandomsolved={randomsolved}\nrandomsolvedsem={randomsolvedsem}\
-          \nmodelsteps={modelsteps}\nmodelstepssem={modelstepssem}\
+          \nqlsteps={qlsteps}\nqlstepssem={qlstepssem}\
           \noraclesteps={oraclesteps}\noraclestepssem={oraclestepssem}\
           \nheuristicsteps={heuristicsteps}\nheuristicstepssem={heuristicstepssem}\
           \nrandomsteps={randomsteps}\nrandomstepssem={randomstepssem}")
 
 
     if eval_blocks and len(lvls)>0 and fixed_num_stacks!=None: # varying blocks, fix stacks
-      modelsolved = [] # ratio of puzzles solved
-      modelsolvedsem = [] 
+      qlsolved = [] # ratio of puzzles solved
+      qlsolvedsem = [] 
       oraclesolved = []
       oraclesolvedsem = []
       heuristicsolved = []
       heuristicsolvedsem = []
       randomsolved = []
       randomsolvedsem = []
-      modelreward = [] # avg episode reward
-      modelrewardsem = []
+      qlreward = [] # avg episode reward
+      qlrewardsem = []
       oraclereward = []
       oraclerewardsem = []
       heuristicreward = []
       heuristicrewardsem = []
       randomreward = []
       randomrewardsem = []
-      modelsteps = [] # num of steps for solving a puzzle 
-      modelstepssem = []
+      qlsteps = [] # num of steps for solving a puzzle 
+      qlstepssem = []
       oraclesteps = []
       oraclestepssem = []
       heuristicsteps = [] # num of steps for solving a puzzle
@@ -543,7 +520,7 @@ def main(
       randomstepssem = []
       for lvl in lvls: # varying num blocks
         print(f"\n----------------------- Evaluating nblocks {lvl}, fixing nstacks={fixed_num_stacks}")
-        print(f"Muzero {groupname}")
+        print(f"Qlearning {groupname}")
         lvlsteps = [] # num steps for successful puzzles
         lvlepsr = [] # episode reward
         lvlsolved = [] # whether the puzzle is solved
@@ -571,57 +548,35 @@ def main(
                                         compositional_type=compositional_type, compositional_holdout=compositional_holdout,
                                         test_puzzle=puzzle,
                                         )
-          mcts_policy = functools.partial(
-            mctx.gumbel_muzero_policy,
-            max_depth=config.max_sim_depth,
-            num_simulations=config.num_simulations,
-            gumbel_scale=config.gumbel_scale)
-          discretizer = utils.Discretizer(
-                        num_bins=config.num_bins,
-                        max_value=config.max_scalar_value,
-                        tx_pair=config.tx_pair,
-                    )
+          action_dict = bwcfg.configurations['plan']['action_dict']
           builder = basics.Builder(
             config=config,
-            get_actor_core_fn=functools.partial(
-                muzero.get_actor_core,
-                evaluation=True,
-                mcts_policy=mcts_policy,
-                discretizer=discretizer,
-            ),
             ActorCls=functools.partial(
               basics.BasicActor,
-              observers=[muzerotrainer.MuObserver(period=100000)],
+              observers=[qltrainer.QObserver(period=1000000)],
               ),
-            optimizer_cnstr=muzero.muzero_optimizer_constr,
-            LossFn=muzero.MuZeroLossFn(
-                discount=config.discount,
-                importance_sampling_exponent=config.importance_sampling_exponent,
-                burn_in_length=config.burn_in_length,
-                max_replay_size=config.max_replay_size,
-                max_priority_weight=config.max_priority_weight,
-                bootstrap_n=config.bootstrap_n,
-                discretizer=discretizer,
-                mcts_policy=mcts_policy,
-                simulation_steps=config.simulation_steps,
-                reanalyze_ratio=0.25, 
-                root_policy_coef=config.root_policy_coef,
-                root_value_coef=config.root_value_coef,
-                model_policy_coef=config.model_policy_coef,
-                model_value_coef=config.model_value_coef,
-                model_reward_coef=config.model_reward_coef,
+            get_actor_core_fn=functools.partial(
+              basics.get_actor_core,
+              evaluation=True,
+            ),
+            LossFn=q_learning.R2D2LossFn(
+              discount=config.discount,
+              importance_sampling_exponent=config.importance_sampling_exponent,
+              burn_in_length=config.burn_in_length,
+              max_replay_size=config.max_replay_size,
+              max_priority_weight=config.max_priority_weight,
+              bootstrap_n=config.bootstrap_n,
             ))
-          network_factory = functools.partial(muzerotrainer.make_muzero_networks, config=config)
+          network_factory = functools.partial(qltrainer.make_qlearning_networks, config=config)
           load_outputs = load_agent(
-            env=env,
-            config=config,
-            builder=builder,
-            network_factory=network_factory,
-            seed_path=seed_path,
-            use_latest=True,
-            evaluation=True)
+                                  env=env,
+                                  config=config,
+                                  builder=builder,
+                                  network_factory=network_factory,
+                                  seed_path=seed_path,
+                                  use_latest=True,
+                                  evaluation=True)
           reload(load_outputs.checkpointer, seed_path)
-          action_dict = bwcfg.configurations['plan']['action_dict']
 
           actor = load_outputs.actor
           timestep = env.reset()
@@ -650,12 +605,12 @@ def main(
         print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
                 \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})\
                 \n\tavg steps {round(np.mean(lvlsteps), 6)} (sem={round(sem(lvlsteps), 6)})")
-        modelsolved.append(round(np.mean(lvlsolved),6))
-        modelsolvedsem.append(round(sem(lvlsolved),6))
-        modelreward.append(round(np.mean(lvlepsr),6))
-        modelrewardsem.append(round(sem(lvlepsr),6))
-        modelsteps.append(round(np.nanmean(lvlsteps), 6))
-        modelstepssem.append(round(sem(lvlsteps, nan_policy="omit"), 6))
+        qlsolved.append(round(np.mean(lvlsolved),6))
+        qlsolvedsem.append(round(sem(lvlsolved),6))
+        qlreward.append(round(np.mean(lvlepsr),6))
+        qlrewardsem.append(round(sem(lvlepsr),6))
+        qlsteps.append(round(np.nanmean(lvlsteps), 6))
+        qlstepssem.append(round(sem(lvlsteps, nan_policy="omit"), 6))
 
         print(f"Oracle")
         lvlsolved = []
@@ -739,11 +694,11 @@ def main(
         randomsteps.append(round(np.nanmean(lvlsteps), 6))
         randomstepssem.append(round(sem(lvlsteps, nan_policy="omit"), 6))
 
-      print(f"modelsolved={modelsolved}\nmodelsolvedsem={modelsolvedsem}\
+      print(f"qlsolved={qlsolved}\nqlsolvedsem={qlsolvedsem}\
           \noraclesolved={oraclesolved}\noraclesolvedsem={oraclesolvedsem}\
           \nheuristicsolved={heuristicsolved}\nheuristicsolvedsem={heuristicsolvedsem}\
           \nrandomsolved={randomsolved}\nrandomsolvedsem={randomsolvedsem}\
-          \nmodelsteps={modelsteps}\nmodelstepssem={modelstepssem}\
+          \nqlsteps={qlsteps}\nqlstepssem={qlstepssem}\
           \noraclesteps={oraclesteps}\noraclestepssem={oraclestepssem}\
           \nheuristicsteps={heuristicsteps}\nheuristicstepssem={heuristicstepssem}\
           \nrandomsteps={randomsteps}\nrandomstepssem={randomstepssem}")
@@ -751,7 +706,7 @@ def main(
 
     if eval_test_puzzles:
       print(f"\n----------------------- Evaluating test_puzzles")
-      print(f"Muzero {groupname}")
+      print(f"Qlearning {groupname}")
       from envs.blocksworld.test_puzzles import test_puzzles
       lvlsolved = []
       lvlepsr = []
@@ -861,24 +816,24 @@ def main(
               \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})")
 
     if eval_num_stacks and fixed_num_blocks!=None:
-      modelsolved = [] # ratio of puzzles solved
-      modelsolvedsem = [] 
+      qlsolved = [] # ratio of puzzles solved
+      qlsolvedsem = [] 
       heuristicsolved = []
       heuristicsolvedsem = []
       oraclesolved = []
       oraclesolvedsem = []
       randomsolved = []
       randomsolvedsem = []
-      modelreward = [] # avg episode reward
-      modelrewardsem = []
+      qlreward = [] # avg episode reward
+      qlrewardsem = []
       oraclereward = []
       oraclerewardsem = []
       heuristicreward = []
       heuristicrewardsem = []
       randomreward = []
       randomrewardsem = []
-      modelsteps = [] # num of steps for solving a puzzle 
-      modelstepssem = []
+      qlsteps = [] # num of steps for solving a puzzle 
+      qlstepssem = []
       oraclesteps = []
       oraclestepssem = []
       heuristicsteps = [] # num of steps for solving a puzzle
@@ -914,60 +869,39 @@ def main(
                                         compositional_type=compositional_type, compositional_holdout=compositional_holdout,
                                         test_puzzle=puzzles[0],
                                         )
-        mcts_policy = functools.partial(
-          mctx.gumbel_muzero_policy,
-          max_depth=config.max_sim_depth,
-          num_simulations=config.num_simulations,
-          gumbel_scale=config.gumbel_scale)
-        discretizer = utils.Discretizer(
-                      num_bins=config.num_bins,
-                      max_value=config.max_scalar_value,
-                      tx_pair=config.tx_pair,
-                  )
+        action_dict = bwcfg.configurations['plan']['action_dict']
         builder = basics.Builder(
           config=config,
-          get_actor_core_fn=functools.partial(
-              muzero.get_actor_core,
-              evaluation=True,
-              mcts_policy=mcts_policy,
-              discretizer=discretizer,
-          ),
           ActorCls=functools.partial(
             basics.BasicActor,
-            observers=[muzerotrainer.MuObserver(period=100000)],
+            observers=[qltrainer.QObserver(period=1000000)],
             ),
-          optimizer_cnstr=muzero.muzero_optimizer_constr,
-          LossFn=muzero.MuZeroLossFn(
-              discount=config.discount,
-              importance_sampling_exponent=config.importance_sampling_exponent,
-              burn_in_length=config.burn_in_length,
-              max_replay_size=config.max_replay_size,
-              max_priority_weight=config.max_priority_weight,
-              bootstrap_n=config.bootstrap_n,
-              discretizer=discretizer,
-              mcts_policy=mcts_policy,
-              simulation_steps=config.simulation_steps,
-              reanalyze_ratio=0.25, 
-              root_policy_coef=config.root_policy_coef,
-              root_value_coef=config.root_value_coef,
-              model_policy_coef=config.model_policy_coef,
-              model_value_coef=config.model_value_coef,
-              model_reward_coef=config.model_reward_coef,
+          get_actor_core_fn=functools.partial(
+            basics.get_actor_core,
+            evaluation=True,
+          ),
+          LossFn=q_learning.R2D2LossFn(
+            discount=config.discount,
+            importance_sampling_exponent=config.importance_sampling_exponent,
+            burn_in_length=config.burn_in_length,
+            max_replay_size=config.max_replay_size,
+            max_priority_weight=config.max_priority_weight,
+            bootstrap_n=config.bootstrap_n,
           ))
-        network_factory = functools.partial(muzerotrainer.make_muzero_networks, config=config)
+        network_factory = functools.partial(qltrainer.make_qlearning_networks, config=config)
         load_outputs = load_agent(
-          env=env,
-          config=config,
-          builder=builder,
-          network_factory=network_factory,
-          seed_path=seed_path,
-          use_latest=True,
-          evaluation=True)
-        reload(load_outputs.checkpointer, seed_path) # can use this to load in latest checkpoints
+                                env=env,
+                                config=config,
+                                builder=builder,
+                                network_factory=network_factory,
+                                seed_path=seed_path,
+                                use_latest=True,
+                                evaluation=True)
+        reload(load_outputs.checkpointer, seed_path)        
         action_dict = bwcfg.configurations['plan']['action_dict']
 
         print(f"\n----------------------- Evaluating on {nstacks} stacks ({fixed_num_blocks} blocks)")
-        print(f"Muzero {groupname}")
+        print(f"Qlearning {groupname}")
         lvlsteps = [] # num steps for successful puzzles
         lvlepsr = [] # episode reward
         lvlsolved = [] # whether the puzzle is solved
@@ -1021,12 +955,12 @@ def main(
         print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
                 \n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})\
                 \n\tavg steps {round(np.mean(lvlsteps), 6)} (sem={round(sem(lvlsteps), 6)})")
-        modelsolved.append(round(np.mean(lvlsolved),6))
-        modelsolvedsem.append(round(sem(lvlsolved),6))
-        modelreward.append(round(np.mean(lvlepsr),6))
-        modelrewardsem.append(round(sem(lvlepsr),6))
-        modelsteps.append(round(np.nanmean(lvlsteps), 6))
-        modelstepssem.append(round(sem(lvlsteps, nan_policy="omit"), 6))
+        qlsolved.append(round(np.mean(lvlsolved),6))
+        qlsolvedsem.append(round(sem(lvlsolved),6))
+        qlreward.append(round(np.mean(lvlepsr),6))
+        qlrewardsem.append(round(sem(lvlepsr),6))
+        qlsteps.append(round(np.nanmean(lvlsteps), 6))
+        qlstepssem.append(round(sem(lvlsteps, nan_policy="omit"), 6))
 
         print(f"Oracle")
         lvlsolved = []
@@ -1147,35 +1081,35 @@ def main(
         randomsteps.append(round(np.nanmean(lvlsteps), 6))
         randomstepssem.append(round(sem(lvlsteps, nan_policy="omit"), 6))
 
-      print(f"modelsolved={modelsolved}\nmodelsolvedsem={modelsolvedsem}\
+      print(f"qlsolved={qlsolved}\nqlsolvedsem={qlsolvedsem}\
           \noraclesolved={oraclesolved}\noraclesolvedsem={oraclesolvedsem}\
           \nheuristicsolved={heuristicsolved}\nheuristicsolvedsem={heuristicsolvedsem}\
           \nrandomsolved={randomsolved}\nrandomsolvedsem={randomsolvedsem}\
-          \nmodelsteps={modelsteps}\nmodelstepssem={modelstepssem}\
+          \nqlsteps={qlsteps}\nqlstepssem={qlstepssem}\
           \noraclesteps={oraclesteps}\noraclestepssem={oraclestepssem}\
           \nheuristicsteps={heuristicsteps}\nheuristicstepssem={heuristicstepssem}\
           \nrandomsteps={randomsteps}\nrandomstepssem={randomstepssem}")
 
 
     if eval_steps and lvls!=None:
-      modelsolved = [np.nan]*max_oracle_steps # ratio of puzzles solved
-      modelsolvedsem = [np.nan]*max_oracle_steps
+      qlsolved = [np.nan]*max_oracle_steps # ratio of puzzles solved
+      qlsolvedsem = [np.nan]*max_oracle_steps
       oraclesolved = [np.nan]*max_oracle_steps
       oraclesolvedsem = [np.nan]*max_oracle_steps
       heuristicsolved = [np.nan]*max_oracle_steps
       heuristicsolvedsem = [np.nan]*max_oracle_steps
       randomsolved = [np.nan]*max_oracle_steps
       randomsolvedsem = [np.nan]*max_oracle_steps
-      modelreward = [np.nan]*max_oracle_steps # avg episode reward
-      modelrewardsem = [np.nan]*max_oracle_steps
+      qlreward = [np.nan]*max_oracle_steps # avg episode reward
+      qlrewardsem = [np.nan]*max_oracle_steps
       oraclereward = [np.nan]*max_oracle_steps
       oraclerewardsem = [np.nan]*max_oracle_steps
       heuristicreward = [np.nan]*max_oracle_steps
       heuristicrewardsem = [np.nan]*max_oracle_steps
       randomreward = [np.nan]*max_oracle_steps
       randomrewardsem = [np.nan]*max_oracle_steps
-      modelsteps = [np.nan]*max_oracle_steps # num of steps for solving a puzzle 
-      modelstepssem = [np.nan]*max_oracle_steps
+      qlsteps = [np.nan]*max_oracle_steps # num of steps for solving a puzzle 
+      qlstepssem = [np.nan]*max_oracle_steps
       oraclesteps = [np.nan]*max_oracle_steps
       oraclestepssem = [np.nan]*max_oracle_steps
       heuristicsteps = [np.nan]*max_oracle_steps # num of steps for solving a puzzle
@@ -1208,63 +1142,40 @@ def main(
         oracle_demo = bwutils.oracle_demo_plan(sim)
         oraclensteps = len(oracle_demo)
         print(f"oraclensteps {oraclensteps}")
-
-        mcts_policy = functools.partial(
-          mctx.gumbel_muzero_policy,
-          max_depth=config.max_sim_depth,
-          num_simulations=config.num_simulations,
-          gumbel_scale=config.gumbel_scale)
-        discretizer = utils.Discretizer(
-                      num_bins=config.num_bins,
-                      max_value=config.max_scalar_value,
-                      tx_pair=config.tx_pair,
-                  )
+        action_dict = bwcfg.configurations['plan']['action_dict']
         builder = basics.Builder(
           config=config,
-          get_actor_core_fn=functools.partial(
-              muzero.get_actor_core,
-              evaluation=True,
-              mcts_policy=mcts_policy,
-              discretizer=discretizer,
-          ),
           ActorCls=functools.partial(
             basics.BasicActor,
-            observers=[muzerotrainer.MuObserver(period=100000)],
+            observers=[qltrainer.QObserver(period=1000000)],
             ),
-          optimizer_cnstr=muzero.muzero_optimizer_constr,
-          LossFn=muzero.MuZeroLossFn(
-              discount=config.discount,
-              importance_sampling_exponent=config.importance_sampling_exponent,
-              burn_in_length=config.burn_in_length,
-              max_replay_size=config.max_replay_size,
-              max_priority_weight=config.max_priority_weight,
-              bootstrap_n=config.bootstrap_n,
-              discretizer=discretizer,
-              mcts_policy=mcts_policy,
-              simulation_steps=config.simulation_steps,
-              reanalyze_ratio=0.25, 
-              root_policy_coef=config.root_policy_coef,
-              root_value_coef=config.root_value_coef,
-              model_policy_coef=config.model_policy_coef,
-              model_value_coef=config.model_value_coef,
-              model_reward_coef=config.model_reward_coef,
+          get_actor_core_fn=functools.partial(
+            basics.get_actor_core,
+            evaluation=True,
+          ),
+          LossFn=q_learning.R2D2LossFn(
+            discount=config.discount,
+            importance_sampling_exponent=config.importance_sampling_exponent,
+            burn_in_length=config.burn_in_length,
+            max_replay_size=config.max_replay_size,
+            max_priority_weight=config.max_priority_weight,
+            bootstrap_n=config.bootstrap_n,
           ))
-        network_factory = functools.partial(muzerotrainer.make_muzero_networks, config=config)
+        network_factory = functools.partial(qltrainer.make_qlearning_networks, config=config)
         load_outputs = load_agent(
-          env=env,
-          config=config,
-          builder=builder,
-          network_factory=network_factory,
-          seed_path=seed_path,
-          use_latest=True,
-          evaluation=True)
-        action_dict = bwcfg.configurations['plan']['action_dict']
+                                env=env,
+                                config=config,
+                                builder=builder,
+                                network_factory=network_factory,
+                                seed_path=seed_path,
+                                use_latest=True,
+                                evaluation=True)
+        reload(load_outputs.checkpointer, seed_path)
 
         # print(f"Muzero {groupname}")
-        lvlsolved = [] if np.isnan(modelsolved[oraclensteps]).all() else modelsolved[oraclensteps]
-        lvlsteps = [] if np.isnan(modelsteps[oraclensteps]).all() else modelsteps[oraclensteps]
-        lvlepsr = [] if np.isnan(modelreward[oraclensteps]).all() else modelreward[oraclensteps]
-        reload(load_outputs.checkpointer, seed_path)
+        lvlsolved = [] if np.isnan(qlsolved[oraclensteps]).all() else qlsolved[oraclensteps]
+        lvlsteps = [] if np.isnan(qlsteps[oraclensteps]).all() else qlsteps[oraclensteps]
+        lvlepsr = [] if np.isnan(qlreward[oraclensteps]).all() else qlreward[oraclensteps]
         actor = load_outputs.actor
         timestep = env.reset()
         actor.observe_first(timestep)
@@ -1289,9 +1200,9 @@ def main(
         lvlepsr.append(epsr)
         if len(lvlsteps)==0:
           lvlsteps=np.nan
-        modelsolved[oraclensteps] = lvlsolved
-        modelreward[oraclensteps] = lvlepsr
-        modelsteps[oraclensteps] = lvlsteps
+        qlsolved[oraclensteps] = lvlsolved
+        qlreward[oraclensteps] = lvlepsr
+        qlsteps[oraclensteps] = lvlsteps
 
         # print(f"Oracle")
         lvlsolved = [] if np.isnan(oraclesolved[oraclensteps]).all() else oraclesolved[oraclensteps]
@@ -1355,12 +1266,12 @@ def main(
         randomsteps[oraclensteps] = lvlsteps
 
       for oraclensteps in range(max_oracle_steps):
-        modelsolvedsem[oraclensteps] = round(sem(modelsolved[oraclensteps]),6)
-        modelsolved[oraclensteps] = round(np.mean(modelsolved[oraclensteps]),6)
-        modelrewardsem[oraclensteps] = round(sem(modelreward[oraclensteps]),6)
-        modelreward[oraclensteps] = round(np.mean(modelreward[oraclensteps]),6)
-        modelstepssem[oraclensteps] = round(sem(modelsteps[oraclensteps], nan_policy="omit"), 6)
-        modelsteps[oraclensteps] = round(np.nanmean(modelsteps[oraclensteps]), 6)
+        qlsolvedsem[oraclensteps] = round(sem(qlsolved[oraclensteps]),6)
+        qlsolved[oraclensteps] = round(np.mean(qlsolved[oraclensteps]),6)
+        qlrewardsem[oraclensteps] = round(sem(qlreward[oraclensteps]),6)
+        qlreward[oraclensteps] = round(np.mean(qlreward[oraclensteps]),6)
+        qlstepssem[oraclensteps] = round(sem(qlsteps[oraclensteps], nan_policy="omit"), 6)
+        qlsteps[oraclensteps] = round(np.nanmean(qlsteps[oraclensteps]), 6)
 
         oraclesolvedsem[oraclensteps] = round(sem(oraclesolved[oraclensteps]),6)
         oraclesolved[oraclensteps] = round(np.mean(oraclesolved[oraclensteps]),6)
@@ -1383,12 +1294,13 @@ def main(
         randomstepssem[oraclensteps] = round(sem(randomsteps[oraclensteps], nan_policy="omit"), 6)
         randomsteps[oraclensteps] = round(np.nanmean(randomsteps[oraclensteps]), 6)
 
-      print(f"modelsolved={modelsolved}\nmodelsolvedsem={modelsolvedsem}\
+      print(f"qlsolved={qlsolved}\nqlsolvedsem={qlsolvedsem}\
           \nrandomsolved={randomsolved}\nrandomsolvedsem={randomsolvedsem}\
-          \nmodelsteps={modelsteps}\nmodelstepssem={modelstepssem}\
+          \nqlsteps={qlsteps}\nqlstepssem={qlstepssem}\
           \noraclesteps={oraclesteps}\noraclestepssem={oraclestepssem}\
           \nheuristicsteps={heuristicsteps}\nheuristicstepssem={heuristicstepssem}\
           \nrandomsteps={randomsteps}\nrandomstepssem={randomstepssem}")
+
 
 
 '''
@@ -1399,14 +1311,14 @@ salloc -p test -t 0-01:00 --mem=200000
 module load python/3.10.12-fasrc01
 mamba activate neurorl
 
-python configs/blocksworld/eval_muzero.py 
+python configs/blocksworld/eval_plan_qlearning.py
 '''
 
 if __name__ == "__main__":
   random.seed(0)
   main(
-        eval_lvls=False, lvls=[2,3,4,5,6], # whether to eval on varying num blocks, nblocks also varied
-        eval_blocks=False, fixed_num_stacks=2, # whether to eval on varying num blocks while fixing num stacks
+        eval_lvls=True, lvls=[2,3,4,5,6], # whether to eval on varying num blocks (num stacks can vary)
+        eval_blocks=False, fixed_num_stacks=2, # whether to eval on varying num blocks while fixing num stacks 
         puzzle_max_stacks=5, # model config
         puzzle_max_blocks=10, # model config
         stack_max_blocks=7, # model config
@@ -1414,91 +1326,81 @@ if __name__ == "__main__":
         compositional=False, # whether the training setting is compositional
         compositional_eval=False, compositional_type='newblock', compositional_holdout=[2,3,5,7], # whether to eval on comp holdout
         eval_test_puzzles=False, # whether to eval on 100 jBrain puzzles
-        eval_num_stacks=False, fixed_num_blocks=4, # whether to eval on varying num stacks while fixing num blocks
-        eval_steps=True, max_oracle_steps=40, nsamples=500, # whether to eval on solution lengths
+        eval_num_stacks=False, fixed_num_blocks=4, # whether to vary num stacks while fixing num block
+        eval_steps=False, max_oracle_steps=40, nsamples=500, # whether to eval on varying solution lengths
         nrepeats=200, # num samples for all analyses except eval_steps
-        groupname='M4~10-2v8max5-10-7', # model to load
+        groupname='Q3~10-2v8max5-10-7', # which model to load
       )
 
 '''
-'Msparse4~10-2v8max5-10-7'
-  stack_max_blocks=7, 
-  puzzle_max_blocks=10,
-  puzzle_max_stacks=5,
-  sparse_reward=True,
-  curriculum: 4~10 (no leak),
-  up_threshold: 0.8,
-  down_threshold: -2,
-  compositional=False,
-
-'M4~10-2v8max5-10-7'
+'Q3~10-2v8max5-10-7'
   stack_max_blocks=7, 
   puzzle_max_blocks=10,
   puzzle_max_stacks=5,
   sparse_reward=False,
-  curriculum: 4~10 (no leak),
+  curriculum: 3~10 (no leak),
   up_threshold: 0.8,
   down_threshold: -2,
   compositional=False,
 
-'Msparse4~10comp5v8max2-11-7'
+'Qsparse3~10-2v8max5-10-7'
   stack_max_blocks=7, 
-  puzzle_max_blocks=11,
-  puzzle_max_stacks=2,
+  puzzle_max_blocks=10,
+  puzzle_max_stacks=5,
   sparse_reward=True,
-  curriculum: 4~10 (no leak),
+  curriculum: 3~10 (no leak),
   up_threshold: 0.8,
   down_threshold: -2,
-  compositional=True, compositional_type='newblock', compositional_holdout=[2,3,5,7], 
+  compositional=False, 
 
-'Mu4~10comp5v8max2-11-7'
-  stack_max_blocks=7, 
-  puzzle_max_blocks=11,
-  puzzle_max_stacks=2,
-  sparse_reward=False,
-  curriculum: 4~10 (no leak),
-  up_threshold: 0.8,
-  down_threshold: -2,
-  compositional=True, compositional_type='newblock', compositional_holdout=[2,3,5,7], 
-
-'Msparse4~10comp5v8max1-11-7'
-  stack_max_blocks=7, 
-  puzzle_max_blocks=11,
-  puzzle_max_stacks=1,
-  sparse_reward=True,
-  curriculum: 4~10 (no leak),
-  up_threshold: 0.8,
-  down_threshold: -2,
-  compositional=True, compositional_type='newblock', compositional_holdout=[2,3,5,7],
-
-'Mu4~10comp5v8max1-11-7'
+'Q3~10comp-2v8max1-11-7'
   stack_max_blocks=7, 
   puzzle_max_blocks=11,
   puzzle_max_stacks=1,
   sparse_reward=False,
-  curriculum: 4~10 (no leak),
+  curriculum: 3~10 (no leak),
   up_threshold: 0.8,
   down_threshold: -2,
   compositional=True, compositional_type='newblock', compositional_holdout=[2,3,5,7],
 
-'muz4+8v-2'
+'Qsparse3~10comp-2v8max1-11-7'
   stack_max_blocks=7, 
-  puzzle_max_blocks=10,
-  puzzle_max_stacks=5,
-  sparse_reward=False,
-  curriculum: 4+ (no leak),
+  puzzle_max_blocks=11,
+  puzzle_max_stacks=1,
+  sparse_reward=True,
+  curriculum: 3~10 (no leak),
   up_threshold: 0.8,
   down_threshold: -2,
-  compositional=False,
+  compositional=True, compositional_type='newblock', compositional_holdout=[2,3,5,7],
 
-'muz2~10long5v8'
+'easy2-10plan'
   stack_max_blocks=7, 
   puzzle_max_blocks=10,
   puzzle_max_stacks=5,
   sparse_reward=False,
   curriculum: 2~10 (no leak),
+  up_threshold: 0.6,?
+  down_threshold: 0.4,?
+  compositional=False,
+
+'2~10plan5v8currleak'
+  stack_max_blocks=7, 
+  puzzle_max_blocks=10,
+  puzzle_max_stacks=5,
+  sparse_reward=False,
+  curriculum: 2~10 (leak),
   up_threshold: 0.8,
   down_threshold: 0.5,
+  compositional=False,
+
+'10only'
+  stack_max_blocks=7, 
+  puzzle_max_blocks=10,
+  puzzle_max_stacks=5,
+  sparse_reward=False,
+  curriculum: 10 only (no leak),
+  up_threshold: 0.8,?
+  down_threshold: -2,
   compositional=False,
 
 '''

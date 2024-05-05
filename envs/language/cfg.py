@@ -1,5 +1,5 @@
 configurations = {
-'max_complexity': 4, # max num of words in a valid sentence sample
+'max_complexity': 8, # max num of words in a valid sentence sample
 'num_fibers': 23, # number of fibers in the brain, will be filled once env is created
 'num_areas': 14, # number of areas in the brain, will be filled once env is created
 'max_sentence_length': 11, # maximum sentence length (depending on the output structure), will be filled once env created
@@ -10,8 +10,35 @@ configurations = {
 'empty_unit': 0.005, # reward unit to give for each correct empty block
 'max_assemblies': 100, # maximum number of assemblies for each area in the state representation
 'area_status': ['last_activated', 'num_lex_assemblies', 'num_total_assemblies'], # area attributes to encode in state
-
-'curriculum': 2, # current curriculum
 'num_actions': None, # number of actions, will be filled once env is created
 
+'curriculum': 2, # current curriculum
+'compositional': True, # whether to holdout particular language sentences
+'compositional_eval': False, # whether in eval mode (if yes, only sampling compositional holdout)
+'compositional_holdout': [
+[-1,'adj','noun', 'intransverb', -1,-1,-1, -1,-1,-1, 'adv'],
+						
+['det',-1,'noun', 'transverb', -1,'adj','noun', -1,-1,-1,-1], 
+[-1,-1,'noun', 'transverb', 'det',-1,'noun', -1,-1,-1,'adv'],
+[-1,'adj','noun', 'intransverb', -1,-1,-1, 'prep',-1,'noun', -1],
+
+['det',-1,'noun', 'transverb', 'det',-1,'noun', -1,-1,-1,'adv'],
+[-1,'adj','noun', 'transverb', -1,'adj','noun', -1,-1,-1,'adv'],
+[-1,-1,'noun', 'transverb', -1,'adj','noun', 'prep',-1,'noun',-1],
+[-1,'adj','noun', 'intransverb', -1,-1,-1, 'prep',-1,'noun', 'adv'],
+
+['det','adj','noun', 'transverb', -1,'adj','noun', -1,-1,-1,'adv'],
+['det',-1,'noun', 'transverb', -1,'adj','noun', 'prep',-1,'noun',-1],
+[-1,'adj','noun', 'transverb', -1,-1,'noun', 'prep','det','noun',-1],
+[-1,-1,'noun', 'transverb', 'det',-1,'noun', 'prep',-1,'noun','adv'],
+['det','adj','noun', 'intransverb', -1,-1,-1, 'prep',-1,'noun', 'adv'],
+
+['det','adj','noun', 'transverb', -1,-1,'noun', 'prep','det','noun',-1],
+['det',-1,'noun', 'transverb', -1,'adj','noun', 'prep','det','noun',-1],
+[-1,'adj','noun', 'transverb', 'det',-1,'noun', 'prep',-1,'noun','adv'],
+[-1,'adj','noun', 'transverb', -1,-1,'noun', 'prep','det','noun','adv'],
+[-1,-1,'noun', 'transverb', 'det','adj','noun', 'prep','det','noun',-1],
+[-1,-1,'noun', 'transverb', -1,'adj','noun', 'prep','det','noun','adv'],
+
+], # sentence structures to holdout 
 }

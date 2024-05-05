@@ -1,23 +1,26 @@
 '''
 // interactive session
+salloc -p test -t 0-01:00 --mem=200000 
+
 salloc -p gpu_test -t 0-01:00 --mem=8000 --gres=gpu:1
+
 module load python/3.10.12-fasrc01
 mamba activate neurorl
 
 // launch parallel job
-python configs/blocksworld/train_add.py \
+python configs/language/train_muzero.py \
   --search='initial' \
   --parallel='sbatch' \
   --num_actors=1 \
   --use_wandb=True \
   --partition=gpu \
   --wandb_entity=yichenli \
-  --wandb_project=add \
+  --wandb_project=language \
   --run_distributed=True \
   --time=0-72:00:00 
 
 // test in interactive session
-python configs/blocksworld/train_add.py \
+python configs/language/train_muzero.py \
   --search='initial' \
   --parallel='none' \
   --run_distributed=True \
@@ -51,7 +54,7 @@ import rlax
 import wandb
 import matplotlib.pyplot as plt
 
-from td_agents import q_learning, basics, muzero
+from td_agents import basics, muzero
 from library import muzero_mlps
 
 from library.dm_env_wrappers import GymWrapper
@@ -60,15 +63,15 @@ import library.parallel as parallel
 import library.utils as utils
 import library.networks as networks
 
-from envs.blocksworld import add
-from envs.blocksworld.cfg import configurations 
+from envs.language import langenv
+from envs.language.cfg import configurations 
 
 obsfreq = 5000 # frequency to call observer
-plotfreq = 50000 # frequency to plot action trajectory
+plotfreq = 0.1 #50000 # frequency to plot action trajectory
 UP_PRESSURE_THRESHOLD = 5 # pressure threshold to increase curriculum
 DOWN_PRESSURE_THRESHOLD = 10 # pressure threshold to decrease curriculum
-UP_REWARD_THRESHOLD = 0.8 # upper reward threshold for incrementing up pressure
-DOWN_REWARD_THRESHOLD = -2#0.5 # lower reward threshold for incrementing down pressure
+UP_REWARD_THRESHOLD = 0.7 # upper reward threshold for incrementing up pressure
+DOWN_REWARD_THRESHOLD = -5 #0.5 # lower reward threshold for incrementing down pressure
 up_pressure = 0 # initial up pressure
 down_pressure = 0 # initial down pressure
 
@@ -95,55 +98,45 @@ State = jax.Array
 def observation_encoder(
     inputs: acme_wrappers.observation_action_reward.OAR,
     num_actions: int,
-    max_assemblies: int=configurations['parse']['max_assemblies'],
-    stack_max_blocks: int=configurations['stack_max_blocks'],
-    puzzle_max_blocks: int=configurations['puzzle_max_blocks']):
+    max_sentence_length: int=configurations['max_sentence_length'],
+    num_fibers: int=configurations['num_fibers'],
+    num_areas: int=configurations['num_areas'],
+    max_assemblies: int=configurations['max_assemblies']):
   """
   A neural network to encode the environment observation / state.
   In the case of parsing blocks, 
-    it creates embeddings for add state, 
+    it creates embeddings for different stacks, pointer info, 
     and embeddings for previous reward and action,
     then it concatenates all embeddings as input.
   The neural network is a multi-layer perceptron with relu.
-  state = 
-    [cur stack readout (initialized as all -1s),
-    goal stack (copy of self.goal, replace None by -1),
-    fiber inhibition status (initialized as all closed 0s),
-    last activated assembly idx in the area (initialized as all -1s), 
-    number of blocks-connected assemblies in each area (initialized as 0s, or puzzle_max_blocks for BLOCKS area),
-    number of all assemblies in each area (initialized as 0s, or puzzle_max_blocks for BLOCKS area),
-    top block node area (initialized as -1), 
-    top block assembly idx in node area (initialized as -1), 
-    top block idx (initialized as -1),
-    is last block (initialized as 0)]
-
+	observation: [cur lex readout (initialized as all -1s),
+					goal lex (padding with -1),
+					goal part of speech (padding -1 at the end),
+					fiber inhibition status (initialized as all closed 0s),
+					area inhibition status (initialized as all closed 0s),
+					last activated assembly idx in the area (initialized as all -1s), 
+					number of lexicon-connected assemblies in each area (initialized as 0s, or max_lexicon for lexicon area),
+					number of all assemblies in each area (initialized as 0s, or max_lexicon for lexicon area),
+					]
   Returns:
     The output of the neural network, ie. the encoded representation.
   """
   # embeddings for different elements in state repr
-  import envs.blocksworld.cfg as bwcfg
-  num_areas = bwcfg.configurations['parse']['num_areas']
-  num_fibers = bwcfg.configurations['parse']['num_fibers']
-  assert type(bwcfg.configurations['parse']['num_areas'])==int, f"{bwcfg.configurations['parse']['num_areas']}"
-  curstack_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
-  cut1 = stack_max_blocks
-  goalstack_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
-  cut2 = cut1 + stack_max_blocks
-  fiber_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
-  cut3 = cut2 + num_fibers
-  lastass_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
-  cut4 = cut3 + num_areas
-  nblass_embed = hk.Linear(512, w_init=hk.initializers.TruncatedNormal())
-  cut5 = cut4 + num_areas
-  nass_embed = hk.Linear(512, w_init=hk.initializers.TruncatedNormal())
-  cut6 = cut5 + num_areas
-  topn_embed = hk.Linear(64, w_init=hk.initializers.TruncatedNormal())
-  cut7 = cut6+1
-  topa_embed = hk.Linear(64, w_init=hk.initializers.TruncatedNormal())
-  cut8 = cut7+1
-  topb_embed = hk.Linear(64, w_init=hk.initializers.TruncatedNormal())
-  cut9 = cut8+1
-  islast_embed = hk.Linear(64, w_init=hk.initializers.TruncatedNormal())
+  curlex_embed = hk.Linear(512, w_init=hk.initializers.TruncatedNormal())
+  cut1 = max_sentence_length # state idx as cutting point
+  goallex_embed = hk.Linear(512, w_init=hk.initializers.TruncatedNormal())
+  cut2 = cut1+max_sentence_length
+  goalpos_embed = hk.Linear(512, w_init=hk.initializers.TruncatedNormal())
+  cut3 = cut2+max_sentence_length
+  fiber_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+  cut4 = cut3+num_fibers
+  area_embed1 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+  cut5 = cut4+num_areas
+  area_embed2 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+  cut6 = cut5+num_areas
+  area_embed3 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+  cut7 = cut6+num_areas
+  area_embed4 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
   # embeddings for prev reward and action
   reward_embed = hk.Linear(128, w_init=hk.initializers.RandomNormal())
   action_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
@@ -152,16 +145,14 @@ def observation_encoder(
   def fn(x, dropout_rate=None):
     # concatenate embeddings and previous reward and action
     x = jnp.concatenate((
-        curstack_embed(jax.nn.one_hot(x.observation[:cut1], puzzle_max_blocks).reshape(-1)),
-        goalstack_embed(jax.nn.one_hot(x.observation[cut1:cut2], puzzle_max_blocks).reshape(-1)),
-        fiber_embed(jax.nn.one_hot(x.observation[cut2:cut3], 2).reshape(-1)),
-        lastass_embed(jax.nn.one_hot(x.observation[cut3:cut4], max_assemblies).reshape(-1)),
-        nblass_embed(jax.nn.one_hot(x.observation[cut4:cut5], max_assemblies).reshape(-1)),
-        nass_embed(jax.nn.one_hot(x.observation[cut5:cut6], max_assemblies).reshape(-1)),
-        topn_embed(jax.nn.one_hot(x.observation[cut6:cut7], 3).reshape(-1)),
-        topa_embed(jax.nn.one_hot(x.observation[cut7:cut8], max_assemblies).reshape(-1)),
-        topb_embed(jax.nn.one_hot(x.observation[cut8:cut9], puzzle_max_blocks).reshape(-1)),
-        islast_embed(jax.nn.one_hot(x.observation[cut9:], 2).reshape(-1)),
+        curlex_embed(x.observation[:cut1].reshape(-1)),
+        goallex_embed(x.observation[cut1:cut2].reshape(-1)),
+        goalpos_embed(x.observation[cut2:cut3].reshape(-1)),
+        fiber_embed(jax.nn.one_hot(x.observation[cut3:cut4], 2).reshape(-1)),
+        area_embed1(jax.nn.one_hot(x.observation[cut4:cut5], 2).reshape(-1)),
+        area_embed2(jax.nn.one_hot(x.observation[cut5:cut6], max_assemblies).reshape(-1)),
+        area_embed3(jax.nn.one_hot(x.observation[cut6:cut7], max_assemblies).reshape(-1)),
+        area_embed4(jax.nn.one_hot(x.observation[cut7:], max_assemblies).reshape(-1)),
         reward_embed(jnp.expand_dims(x.reward, 0)), 
         action_embed(jax.nn.one_hot(x.action, num_actions))  
       ))
@@ -176,50 +167,103 @@ def observation_encoder(
   return fn(inputs)
 
 
-def make_qlearning_networks(
-        env_spec: specs.EnvironmentSpec,
-        config: q_learning.Config,
-        ):
-  """
-  Builds default R2D2 networks for Q-learning based on the environment specifications and configurations.
-  """
+def make_muzero_networks(
+    env_spec: specs.EnvironmentSpec,
+    config: muzero.Config,
+    **kwargs) -> muzero.MuZeroNetworks:
   num_actions = int(env_spec.actions.maximum - env_spec.actions.minimum) + 1
-  import envs.blocksworld.cfg as bwcfg
-  assert num_actions == bwcfg.configurations['parse']['num_actions']
+  def make_core_module() -> muzero.MuZeroNetworks:
+    observation_fn = functools.partial(observation_encoder,
+                                       num_actions=num_actions)
+    observation_fn = hk.to_module(observation_fn)('obs_fn')
+    state_fn = networks.DummyRNN()
+    def transition_fn(action: int, state: State):
+      # Setup transition function: ResNet. action: [A], state: [D]
+      action_onehot = jax.nn.one_hot(
+          action, num_classes=num_actions)
+      assert action_onehot.ndim in (1, 2), "should be [A] or [B, A]"
+      def _transition_fn(action_onehot, state):
+        """ResNet transition model that scales gradient."""
+        out = muzero_mlps.SimpleTransition(
+            num_blocks=config.transition_blocks)(
+            action_onehot, state)
+        out = muzero.scale_gradient(out, config.scale_grad)
+        return out, out
+      if action_onehot.ndim == 2:
+        _transition_fn = jax.vmap(_transition_fn)
+      return _transition_fn(action_onehot, state)
+    transition_fn = hk.to_module(transition_fn)('transition_fn')
+    # Setup prediction functions: policy, value, reward
+    root_value_fn = hk.nets.MLP(
+        (128, 32, config.num_bins), name='pred_root_value')
+    root_policy_fn = hk.nets.MLP(
+        (128, 32, num_actions), name='pred_root_policy')
+    model_reward_fn = hk.nets.MLP(
+        (32, 32, config.num_bins), name='pred_model_reward')
 
-  def make_core_module() -> q_learning.R2D2Arch:
-
-    observation_fn = functools.partial(
-      observation_encoder, 
-      num_actions=num_actions)
-    return q_learning.R2D2Arch(
-      torso=hk.to_module(observation_fn)('obs_fn'),
-      memory=networks.DummyRNN(),  # nothing happens
-      head=duelling.DuellingMLP(num_actions,
-                                hidden_sizes=[config.q_dim]))
-
-  return networks_lib.make_unrollable_network(
-    env_spec, make_core_module)
-
-
+    if config.seperate_model_nets: # what is typically done
+      model_value_fn = hk.nets.MLP(
+          (128, 32, config.num_bins), name='pred_model_value')
+      model_policy_fn = hk.nets.MLP(
+          (128, 32, num_actions), name='pred_model_policy')
+    else:
+      model_value_fn = root_value_fn
+      model_policy_fn = root_policy_fn
+    def root_predictor(state: State):
+      assert state.ndim in (1, 2), "should be [D] or [B, D]"
+      def _root_predictor(state: State):
+        policy_logits = root_policy_fn(state)
+        value_logits = root_value_fn(state)
+        return muzero.RootOutput(
+            state=state,
+            value_logits=value_logits,
+            policy_logits=policy_logits,
+        )
+      if state.ndim == 2:
+        _root_predictor = jax.vmap(_root_predictor)
+      return _root_predictor(state)
+    def model_predictor(state: State):
+      assert state.ndim in (1, 2), "should be [D] or [B, D]"
+      def _model_predictor(state: State):
+        reward_logits = model_reward_fn(state)
+        policy_logits = model_policy_fn(state)
+        value_logits = model_value_fn(state)
+        return muzero.ModelOutput(
+            new_state=state,
+            value_logits=value_logits,
+            policy_logits=policy_logits,
+            reward_logits=reward_logits,
+        )
+      if state.ndim == 2:
+        _model_predictor = jax.vmap(_model_predictor)
+      return _model_predictor(state)
+    return muzero.MuZeroArch(
+        observation_fn=observation_fn,
+        state_fn=state_fn,
+        transition_fn=transition_fn,
+        root_pred_fn=root_predictor,
+        model_pred_fn=model_predictor)
+  return muzero.make_network(
+    environment_spec=env_spec,
+    make_core_module=make_core_module,
+    **kwargs)
   
-class QObserver(basics.ActorObserver):
+
+class MuObserver(basics.ActorObserver):
   """
   An observer for tracking actions, rewards, and states during experiment.
-    May contain observations from both training and evaluation.
   Log observed information and visualizations to wandb.
   """
   def __init__(self,
                period: int = obsfreq,
-               prefix: str = 'QObserver',
+               prefix: str = 'MuObserver',
                plot_every: int = plotfreq):
-    super(QObserver, self).__init__()
+    super(MuObserver, self).__init__()
     self.period = period
     self.prefix = prefix
     self.idx = -1
     self.logging = True
     self.plot_every = plot_every
-
   def wandb_log(self, d: dict):
     if self.logging:
       if wandb.run is not None:
@@ -227,56 +271,45 @@ class QObserver(basics.ActorObserver):
       else:
         self.logging = False
         self.period = np.inf
-
   def observe_first(self, state: basics.ActorState, timestep: dm_env.TimeStep) -> None:
     """Observes the initial state and initial time-step.
-
     Usually state will be all zeros and time-step will be output of reset."""
     self.idx += 1
-
     # epsiode just ended, flush metrics if you want
     if self.idx > 0:
       self.get_metrics()
-
     # start collecting metrics again
     self.actor_states = [state]
     self.timesteps = [timestep]
     self.actions = []
-
   def observe_action(self, state: basics.ActorState, action: jax.Array) -> None:
     """Observe state and action that are due to observation of time-step.
-
     Should be state after previous time-step along"""
     self.actor_states.append(state)
     self.actions.append(action)
-
   def observe_timestep(self, timestep: dm_env.TimeStep) -> None:
     """Observe next.
-
     Should be time-step after selecting action"""
     self.timesteps.append(timestep)
 
-  def get_metrics(self, max_steps:int = configurations['add']['max_steps']) -> Dict[str, any]:
+  def get_metrics(self) -> Dict[str, any]:
     """Returns metrics collected for the current episode."""
     if self.idx==0 or (not self.idx % self.period == 0):
       return
     if not self.logging:
       return 
-    
     print('\n\nlogging!')
-    import envs.blocksworld.cfg as bwcfg
-    max_steps = bwcfg.configurations['add']['max_steps']
-    curriculum = bwcfg.configurations['add']['cur_curriculum_level']
+    import envs.language.cfg as langcfg
+    max_steps = langcfg.configurations['max_steps']
+    curriculum = langcfg.configurations['curriculum']
+    action_dict = langcfg.configurations['action_dict']
     global up_pressure, down_pressure, UP_PRESSURE_THRESHOLD, DOWN_PRESSURE_THRESHOLD, UP_REWARD_THRESHOLD, DOWN_REWARD_THRESHOLD
-    tmp_down_threshold = DOWN_PRESSURE_THRESHOLD * (curriculum+1) if 0<=curriculum<=bwcfg.configurations['add']['maxnprocesses'] else DOWN_PRESSURE_THRESHOLD*bwcfg.configurations['add']['maxnprocesses'] # adjust threshold for higher curriculum
+    tmp_down_threshold = DOWN_PRESSURE_THRESHOLD * (curriculum-1) if 2<=curriculum<=configurations['max_complexity'] else DOWN_PRESSURE_THRESHOLD*configurations['max_sentence_length'] # adjust threshold for higher curriculum
     print(f"current curriculum {curriculum}, up_pressure {up_pressure} / {UP_PRESSURE_THRESHOLD}, down_pressure {down_pressure} / {tmp_down_threshold}")
+    # first prediction is empty (None)
     results = {}
-    action_dict = bwcfg.configurations['parse']['action_dict']
-    q_values = [s.predictions for s in self.actor_states[1:]] # first prediction is empty (None)
-    q_values = jnp.stack(q_values)
-    npreds = len(q_values)
+    npreds = len(self.actor_states[1:])
     actions = jnp.stack(self.actions)[:npreds]
-    q_values = rlax.batched_index(q_values, actions)
     action_names = [action_dict[a.item()] for a in actions]
     rewards = jnp.stack([t.reward for t in self.timesteps[1:]])
     observations = jnp.stack([t.observation.observation for t in self.timesteps[1:]])
@@ -286,55 +319,46 @@ class QObserver(basics.ActorObserver):
     # log the metrics
     results["actions"] = actions
     results["action_names"] = action_names
-    results["q_values"] = q_values
     results["rewards"] = rewards
     results["observations"] = observations 
     # plot actions
-    if self.idx % self.plot_every == 0:
-      fig, ax = plt.subplots(max_steps//10, 10, figsize=(30, 4.9*(max_steps//10)))
-      cut1 = bwcfg.configurations['stack_max_blocks'] # cur stack
-      cut2 = cut1 + bwcfg.configurations['stack_max_blocks'] # goal stack
-      cut3 = cut2 + bwcfg.configurations['parse']['num_fibers'] # fiber status
-      cut4 = cut3 + bwcfg.configurations['parse']['num_areas'] # last active assembly
-      cut5 = cut4 + bwcfg.configurations['parse']['num_areas'] # num blocks related assembly
-      cut6 = cut5 + bwcfg.configurations['parse']['num_areas'] # num total assembly
-      cut7 = cut6+1 # top node area
-      cut8 = cut7+1 # top area assembly
-      cut9 = cut8+1 # top block id, then is_last_block
+    if self.idx % self.plot_every == 0: 
+      fig, ax = plt.subplots(max_steps//10, 10, figsize=(30, 6*(max_steps//10)))
+      cut1 = max_sentence_length # state idx as cutting point
+      cut2 = cut1+max_sentence_length
+      cut3 = cut2+max_sentence_length
+      cut4 = cut3+num_fibers
+      cut5 = cut4+num_areas
+      cut6 = cut5+num_areas
+      cut7 = cut6+num_areas
       for t in range(npreds):
         irow = t//10
         jcol = t%10
-        ax[irow,jcol].axhline(y=10, xmin=0, xmax=10)
-        ax[irow,jcol].text(0.2, 9, f"Curr:\n{observations[t][:cut1]}", 
+        ax[irow,jcol].axhline(y=19, xmin=0, xmax=10)
+        ax[irow,jcol].text(0.2, 13.5, f"Curr:\n{observations[t][:cut1].reshape(configurations['puzzle_max_stacks'], configurations['stack_max_blocks'])}", 
                           style='italic', bbox={'facecolor': 'orange', 'alpha': 0.2, 'pad': 1})
-        ax[irow,jcol].text(0.2, 7.5, f"Goal:\n{observations[t][cut1:cut2]}", 
+        ax[irow,jcol].text(0.2, 8, f"Goal:\n{observations[t][cut1:cut2].reshape(configurations['puzzle_max_stacks'], configurations['stack_max_blocks'])}", 
                           style='italic', bbox={'facecolor': 'green', 'alpha': 0.2, 'pad': 1})
-        ax[irow,jcol].text(0.2, 6, f"Fiber:\n{observations[t][cut2:cut3]}", 
-                          style='italic', bbox={'facecolor': 'red', 'alpha': 0.2, 'pad': 1})
-        ax[irow,jcol].text(0.2, 5, f"Last a: {observations[t][cut3:cut4]}", 
-                          style='italic', bbox={'facecolor': 'pink', 'alpha': 0.2, 'pad': 1})
-        ax[irow,jcol].text(0.2, 4, f"Num ba: {observations[t][cut4:cut5]}", 
+        ax[irow,jcol].text(0.2, 5, f"Table:\n{observations[t][cut2:cut3].reshape(min(2, configurations['puzzle_max_blocks']//7),-1)}", 
                           style='italic', bbox={'facecolor': 'gray', 'alpha': 0.2, 'pad': 1})
-        ax[irow,jcol].text(0.2, 3, f"Num a: {observations[t][cut5:cut6]}", 
-                          style='italic', bbox={'facecolor': 'gray', 'alpha': 0.2, 'pad': 1})
-        ax[irow,jcol].text(0.2, 2, f"Top N: {observations[t][cut6:cut7]}, Top a: {observations[t][cut7:cut8]}", 
+        ax[irow,jcol].text(0.2, 3, f"Correct: {observations[t][cut3:cut4]}", 
+                          style='italic', bbox={'facecolor': 'blue', 'alpha': 0.2, 'pad': 1})
+        ax[irow,jcol].text(0.2, 2, f"Spointer: {observations[t][cut4:cut5]}, Tpointer: {observations[t][cut5:cut6]}", 
                           style='italic', bbox={'facecolor': 'white', 'alpha': 0.2, 'pad': 1})
-        ax[irow,jcol].text(0.2, 1.5, f"Top b: {observations[t][cut8:cut9]}", 
-                          style='italic', bbox={'facecolor': 'white', 'alpha': 0.2, 'pad': 1})
-        ax[irow,jcol].text(0.2, 0.5, f"Islastb: {observations[t][cut9:]}", 
+        ax[irow,jcol].text(0.2, 1, f"Iparsed: {observations[t][cut6:cut7]}, Gparsed: {observations[t][cut7:]}", 
                           style='italic', bbox={'facecolor': 'white', 'alpha': 0.2, 'pad': 1})
         ax[irow,jcol].set_xticks([])
         ax[irow,jcol].set_yticks([])
-        ax[irow,jcol].set_ylim(0,10.1)
+        ax[irow,jcol].set_ylim(0,19.1)
         ax[irow,jcol].set_xlim(0,10.1)
-        ax[irow,jcol].set_title(f"{action_names[t]}\nR={round(float(rewards[t]),5)}, Q={round(float(q_values[t]),5)}", fontsize=10)
+        ax[irow,jcol].set_title(f"A={action_names[t]}\nR={round(float(rewards[t]),5)}")
       plt.suptitle(t=f"Curriculum {curriculum}, up_pressure {up_pressure} / {UP_PRESSURE_THRESHOLD}, down_pressure {down_pressure} / {tmp_down_threshold}\nepisode reward={episode_reward}",
-                    x=0.5, y=0.92)
+                    x=0.5, y=0.89)
       self.wandb_log({f"{self.prefix}/trajectory": wandb.Image(fig)})
       plt.close(fig)
     # print first 50 actions
-    for t in range(min(npreds, 50)): 
-      print(f"t={t}, A={action_names[t]}, R={round(float(rewards[t]),5)}, Q={round(float(q_values[t]),5)}, state={observations[t]}")
+    for t in range(min(npreds, 50)):
+      print(f"t={t}, A={action_names[t]}, R={round(float(rewards[t]),5)}, state={observations[t]}")
     print(f'\ncurrent episode rewards {episode_reward}')
     # check curriculum
     if episode_reward > UP_REWARD_THRESHOLD:
@@ -350,39 +374,36 @@ class QObserver(basics.ActorObserver):
       down_pressure = 0
     # up pressure reached threshold
     if up_pressure >= UP_PRESSURE_THRESHOLD: 
-      if 1<=curriculum<bwcfg.configurations['stack_max_blocks']: #0<=curriculum<=bwcfg.configurations['add']['maxnprocesses']-1:
+      if 2<=curriculum<=configurations['max_complexity']-1:
         curriculum += 1
         print(f'up_pressure reached threshold, increasing curriculum from {curriculum-1} to {curriculum}')
-      elif curriculum==bwcfg.configurations['stack_max_blocks']: #curriculum==bwcfg.configurations['add']['maxnprocesses']:
-        curriculum = -1
-        # print(f"up_pressure reached threshold, increasing curriculum from {bwcfg.configurations['add']['maxnprocesses']} to {curriculum}")
-        print(f"up_pressure reached threshold, increasing curriculum from {bwcfg.configurations['stack_max_blocks']} to {curriculum}")
-      elif curriculum==-1: 
+      elif curriculum==configurations['max_complexity']:
+        curriculum = configurations['max_complexity'] 
+        print(f"up_pressure reached threshold, staying at curriculum {curriculum}")
+      elif curriculum==0: 
         print(f'up_pressure reached threshold, staying at curriculum {curriculum}')
       else:
-        raise ValueError(f"curriculum {curriculum} should be int in set(-1, 1,2,...,{bwcfg.configurations['stack_max_blocks']})")
+        raise ValueError(f"curriculum {curriculum} should be int in set(0, 2, 3, ..., {configurations['max_complexity']})")
       up_pressure = 0 # release pressure
     # down pressure reached threshold
     elif down_pressure >= tmp_down_threshold: 
-      if 2<=curriculum<=bwcfg.configurations['stack_max_blocks']: #1<=curriculum<=bwcfg.configurations['add']['maxnprocesses']:
+      if 3<=curriculum<=configurations['max_complexity']:
         curriculum -= 1
         print(f'down_pressure reached threshold, decreasing curriculum from {curriculum+1} to {curriculum}')
-      elif curriculum==-1:
-        # curriculum = bwcfg.configurations['add']['maxnprocesses']
-        curriculum = bwcfg.configurations['stack_max_blocks']
-        print(f"down_pressure reached threshold, falling back from curriculum -1 to {curriculum}")
-      # elif curriculum==0:
-      #   curriculum = 0
-      #   print(f"down_pressure reached threshold, continuing curriculum {curriculum}")
+      elif curriculum==0:
+        print(f"down_pressure reached threshold, staying at curriculum {curriculum}")
+      elif curriculum==2:
+        curriculum = 2
+        print(f"down_pressure reached threshold, staying at curriculum {curriculum}")
       else:
-        raise ValueError(f"curriculum {curriculum} should be in set(-1, 1,2,...,{bwcfg.configurations['stack_max_blocks']})")
+        raise ValueError(f"curriculum {curriculum} should be int in set(0, 2, 3, ..., {configurations['max_complexity']})")
       down_pressure = 0 # release pressure
-    bwcfg.configurations['add']['cur_curriculum_level'] = curriculum # update curriculum in cfg file
+    langcfg.configurations['curriculum'] = curriculum # update curriculum in cfg file
     print('logging ends\n\n')
     return results
   
 
-def make_environment(seed: int ,
+def make_environment(seed: int = 0 ,
                      evaluation: bool = False,
                      **kwargs) -> dm_env.Environment:
   """
@@ -393,28 +414,28 @@ def make_environment(seed: int ,
   """
   del seed
   del evaluation
-  
-  # create dm_env
-  sim = add.Simulator()
-  sim.reset()
 
-  import envs.blocksworld.cfg as bwcfg
-  bwcfg.configurations['parse']['num_actions'] = sim.num_actions
-  bwcfg.configurations['parse']['action_dict'] = sim.action_dict
-  bwcfg.configurations['parse']['num_fibers'] = sim.num_fibers
-  bwcfg.configurations['parse']['num_areas'] = sim.num_areas
-  assert type(bwcfg.configurations['parse']['num_areas'])==int, f"{bwcfg.configurations['parse']['num_areas']}"
-  env = add.EnvWrapper(sim)
+  # create dm_env
+  sim = langenv.Simulator()
+  sim.reset()
+  
+  # insert info into cfg
+  import envs.language.cfg as langcfg
+  langcfg.configurations['num_actions'] = sim.num_actions
+  langcfg.configurations['action_dict'] = sim.action_dict
+  langcfg.configurations['max_sentence_length'] = sim.max_sentence_length
+  langcfg.configurations['num_areas'] = sim.num_areas
+  langcfg.configurations['num_fibers'] = sim.num_fibers
+  env = langenv.EnvWrapper(sim)
 
   # add acme wrappers
-  wrapper_list = [
-    # put action + reward in observation
-    acme_wrappers.ObservationActionRewardWrapper,
-    # cheaper to do computation in single precision
+  wrapper_list = [ # put action + reward in observation
+    acme_wrappers.ObservationActionRewardWrapper,# cheaper to do computation in single precision
     acme_wrappers.SinglePrecisionWrapper,
   ]
 
   return acme_wrappers.wrap_all(env, wrapper_list)
+
 
 def setup_experiment_inputs(
     agent_config_kwargs: dict=None,
@@ -437,44 +458,68 @@ def setup_experiment_inputs(
   agent = agent_config_kwargs.get('agent', '')
   assert agent != '', 'please set agent'
 
-  if agent == 'qlearning':
-    config = q_learning.Config(**config_kwargs)
+  if agent == 'muzero':
+    config = muzero.Config(**config_kwargs)
+    import mctx
+    # currently using same policy in learning and acting
+    mcts_policy = functools.partial(
+      mctx.gumbel_muzero_policy,
+      max_depth=config.max_sim_depth,
+      num_simulations=config.num_simulations,
+      gumbel_scale=config.gumbel_scale)
+
+    discretizer = utils.Discretizer(
+                  num_bins=config.num_bins,
+                  max_value=config.max_scalar_value,
+                  tx_pair=config.tx_pair,
+              )
+
     builder = basics.Builder(
       config=config,
+      get_actor_core_fn=functools.partial(
+          muzero.get_actor_core,
+          mcts_policy=mcts_policy,
+          discretizer=discretizer,
+      ),
       ActorCls=functools.partial(
         basics.BasicActor,
-        observers=[QObserver(period=1 if debug else obsfreq)],
+        observers=[MuObserver(period=1 if debug else obsfreq)],
         ),
-      LossFn=q_learning.R2D2LossFn(
+      optimizer_cnstr=muzero.muzero_optimizer_constr,
+      LossFn=muzero.MuZeroLossFn(
           discount=config.discount,
           importance_sampling_exponent=config.importance_sampling_exponent,
           burn_in_length=config.burn_in_length,
           max_replay_size=config.max_replay_size,
           max_priority_weight=config.max_priority_weight,
           bootstrap_n=config.bootstrap_n,
+          discretizer=discretizer,
+          mcts_policy=mcts_policy,
+          simulation_steps=config.simulation_steps,
+          #reanalyze_ratio=config.reanalyze_ratio,
+          # reanalyze_ratio=0.25, # how frequently to tune value loss wrt tree node values (faster but less accurate)
+          reanalyze_ratio=0.1,
+          root_policy_coef=config.root_policy_coef,
+          root_value_coef=config.root_value_coef,
+          model_policy_coef=config.model_policy_coef,
+          model_value_coef=config.model_value_coef,
+          model_reward_coef=config.model_reward_coef,
       ))
-    network_factory = functools.partial(make_qlearning_networks, config=config)
+    network_factory = functools.partial(make_muzero_networks, config=config)
   else:
     raise NotImplementedError(agent)
-
-  # -----------------------
   # load environment factory
-  # -----------------------
   environment_factory = functools.partial(
     make_environment,
     **env_kwargs)
-
-  # -----------------------
   # setup observer factory for environment
   # this logs the average every reset=50 episodes (instead of every episode)
-  # -----------------------
   observers = [
       utils.LevelAvgReturnObserver(
         reset=50,
         get_task_name=lambda e: "task"
         ),
       ]
-
   return experiment_builder.OnlineExperimentConfigInputs(
     agent=agent,
     agent_config=config,
@@ -484,6 +529,7 @@ def setup_experiment_inputs(
     environment_factory=environment_factory,
     observers=observers,
   )
+
 
 def train_single(
     env_kwargs: dict = None,
@@ -676,21 +722,23 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['add4+5v-2max10-7']),
+            "group": tune.grid_search(['M2+comp-5v.7']),
             "num_steps": tune.grid_search([500e6]),
 
             "samples_per_insert": tune.grid_search([20.0]),
             "batch_size": tune.grid_search([128]),
             "trace_length": tune.grid_search([10]),
             "learning_rate": tune.grid_search([1e-3]),
-            "agent": tune.grid_search(['qlearning']),
+
+            "agent": tune.grid_search(['muzero']),
+            "num_bins": tune.grid_search([1001]),  # for muzero
+            "num_simulations": tune.grid_search([10]), # for muzero
+
             "state_dim": tune.grid_search([1024]),
-            "q_dim": tune.grid_search([1024]),
         }
     ]
   else:
     raise NotImplementedError(search)
-
   return space
 
 def main(_):
