@@ -101,7 +101,9 @@ def observation_encoder(
     max_sentence_length: int=configurations['max_sentence_length'],
     num_fibers: int=configurations['num_fibers'],
     num_areas: int=configurations['num_areas'],
-    max_assemblies: int=configurations['max_assemblies']):
+    max_assemblies: int=configurations['max_assemblies'],
+    num_pos: int=configurations['num_pos'],
+    num_words: int=configurations['num_words'],):
   """
   A neural network to encode the environment observation / state.
   In the case of parsing blocks, 
@@ -121,33 +123,48 @@ def observation_encoder(
   Returns:
     The output of the neural network, ie. the encoded representation.
   """
+
+
   # embeddings for different elements in state repr
-  curlex_embed = hk.Linear(512, w_init=hk.initializers.TruncatedNormal())
+  curlex_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
   cut1 = max_sentence_length # state idx as cutting point
-  goallex_embed = hk.Linear(512, w_init=hk.initializers.TruncatedNormal())
+  goallex_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
   cut2 = cut1+max_sentence_length
-  goalpos_embed = hk.Linear(512, w_init=hk.initializers.TruncatedNormal())
+  goalpos_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
   cut3 = cut2+max_sentence_length
-  fiber_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+  fiber_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
   cut4 = cut3+num_fibers
   area_embed1 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
   cut5 = cut4+num_areas
-  area_embed2 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+  area_embed2 = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
   cut6 = cut5+num_areas
-  area_embed3 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+  area_embed3 = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
   cut7 = cut6+num_areas
-  area_embed4 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+  area_embed4 = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
   # embeddings for prev reward and action
   reward_embed = hk.Linear(128, w_init=hk.initializers.RandomNormal())
-  action_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
-  # backbone of the encoder: mlp with relu
+  action_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+  # GRU for goallex and goalpos
+  gru = hk.GRU(512, w_i_init=hk.initializers.TruncatedNormal(), b_init=hk.initializers.TruncatedNormal())
+  gru_out_embed = hk.Linear(512, w_init=hk.initializers.TruncatedNormal())
+  # backbone of the encoder
   mlp = hk.nets.MLP([512,512,512,512], activate_final=True) # default RELU activations between layers (and after final layer)
   def fn(x, dropout_rate=None):
+    # process gru
+    gru_input = jnp.concatenate((
+                        goallex_embed(jax.nn.one_hot(x.observation[cut1:cut2], num_words)),
+                        goalpos_embed(jax.nn.one_hot(x.observation[cut2:cut3], num_pos)),
+                        ), axis=1)
+    state = gru.initial_state(None)
+    output_sequence, final_state = hk.static_unroll(core=gru, input_sequence=gru_input, initial_state=state, time_major=True)
+    goal_repr = jnp.sum(output_sequence, axis=0) # sum along time dimension
+    print(f"gru_input shape {gru_input.shape} \noutput_sequence shape {output_sequence.shape} \ngoal_repr shape {goal_repr.shape}")
     # concatenate embeddings and previous reward and action
     x = jnp.concatenate((
-        curlex_embed(x.observation[:cut1].reshape(-1)),
-        goallex_embed(x.observation[cut1:cut2].reshape(-1)),
-        goalpos_embed(x.observation[cut2:cut3].reshape(-1)),
+        curlex_embed(jax.nn.one_hot(x.observation[:cut1], num_words).reshape(-1)),
+        # goallex_embed(jax.nn.one_hot(x.observation[cut1:cut2], num_words).reshape(-1)),
+        # goalpos_embed(jax.nn.one_hot(x.observation[cut2:cut3], num_pos).reshape(-1)),
+        gru_out_embed(goal_repr.reshape(-1)),
         fiber_embed(jax.nn.one_hot(x.observation[cut3:cut4], 2).reshape(-1)),
         area_embed1(jax.nn.one_hot(x.observation[cut4:cut5], 2).reshape(-1)),
         area_embed2(jax.nn.one_hot(x.observation[cut5:cut6], max_assemblies).reshape(-1)),
@@ -722,7 +739,7 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['M2+comp-5v.7']),
+            "group": tune.grid_search(['Mgru2+comp-5v.7nospace']),
             "num_steps": tune.grid_search([500e6]),
 
             "samples_per_insert": tune.grid_search([20.0]),

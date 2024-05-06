@@ -3,6 +3,8 @@ configurations = {
 'num_fibers': 23, # number of fibers in the brain, will be filled once env is created
 'num_areas': 14, # number of areas in the brain, will be filled once env is created
 'max_sentence_length': 11, # maximum sentence length (depending on the output structure), will be filled once env created
+'num_pos': 7, # total number of possible part of speech
+'num_words': 27, # total number of possible volcabularies 
 
 'episode_max_reward': 1, # max reward for solving the entire episode correctly
 'max_steps': 300, # maximum number of actions allowed in each episode
@@ -13,6 +15,7 @@ configurations = {
 'num_actions': None, # number of actions, will be filled once env is created
 
 'curriculum': 2, # current curriculum
+'spacing': False, # whether to fill -1s to the goal pos structure and goal lex structure
 'compositional': True, # whether to holdout particular language sentences
 'compositional_eval': False, # whether in eval mode (if yes, only sampling compositional holdout)
 'compositional_holdout': [

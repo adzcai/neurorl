@@ -1,3 +1,8 @@
+# groundedSCAN data
+envs/gscan/groundedSCAN/data/
+envs/gscan/groundedSCAN/test_dir/
+
+# 
 *slurm*
 .acme
 .minigrid

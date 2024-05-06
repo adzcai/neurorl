@@ -35,6 +35,7 @@ OBJ_P = 'OBJ_P'
 NOUN = 'NOUN'
 # all areas
 AREAS = [LEX, DET, NOUN, ADJ, PREP, VERB, ADVERB, SUBJ, OBJ, PREP_P, OBJ_P, SUBJ_P, VERB_P, ROOT]
+INHIBITABLE_AREAS = [DET, ADJ, NOUN]
 # all lexicon and their part of speech types
 LEXEME_DICT = {
 		'det': ['the', 'those'], 
@@ -109,6 +110,14 @@ def synthetic_readout(simulator, cfg=CFG, verbose=False):
 				print(f"\t\tbase case! decoeded word {wordid} ({word})") if verbose else 0
 	assert len(decoded)==len(OUTPUT_FORMAT)
 	print(f"decoded sequence: {decoded}") if verbose else 0
+	if simulator.spacing==False: # remove spacing 
+		compactdecoded = []
+		for d in decoded:
+			if d != -1:
+				compactdecoded.append(d)
+		compactdecoded += [-1] * (simulator.max_sentence_length-len(compactdecoded))
+		decoded = compactdecoded
+		assert len(decoded)==len(OUTPUT_FORMAT)
 	return decoded
 
 def translate(wordids, wordlist=ALL_WORDS):
@@ -122,7 +131,7 @@ def translate(wordids, wordlist=ALL_WORDS):
 	return words
 
 def init_simulator_areas():
-	return AREAS, LEX, FIBERS, ALL_WORDS, OUTPUT_FORMAT
+	return AREAS, INHIBITABLE_AREAS, LEX, FIBERS, ALL_WORDS, OUTPUT_FORMAT
 
 def get_action_idx(atuple, action_dict):
 	(aname, arg1, arg2) = atuple
@@ -166,10 +175,10 @@ def parse_noun(action_dict):
 				("inhibit_area", NOUN, None),
 				("inhibit_area", ADJ, None),
 				("inhibit_area", DET, None),
-				("inhibit_area", PREP, None),
-				("inhibit_area", PREP_P, None),
-				("inhibit_area", VERB, None),
-				("inhibit_area", ADVERB, None),
+				# ("inhibit_area", PREP, None),
+				# ("inhibit_area", PREP_P, None),
+				# ("inhibit_area", VERB, None),
+				# ("inhibit_area", ADVERB, None),
 				],
 			]
 	return get_action_idxs(action_tuples, action_dict)
@@ -183,9 +192,9 @@ def parse_transverb(action_dict):
 				("disinhibit_fiber", SUBJ, DET),
 				("disinhibit_fiber", SUBJ, ADJ),
 				("disinhibit_fiber", SUBJ, NOUN),
-				("disinhibit_area", ROOT, None),
-				("disinhibit_area", SUBJ_P, None),
-				("disinhibit_area", SUBJ, None),
+				# ("disinhibit_area", ROOT, None),
+				# ("disinhibit_area", SUBJ_P, None),
+				# ("disinhibit_area", SUBJ, None),
 				("disinhibit_area", DET, None),
 				("disinhibit_area", ADJ, None),
 				("disinhibit_area", NOUN, None),
@@ -199,16 +208,15 @@ def parse_transverb(action_dict):
 				("inhibit_fiber", SUBJ, DET),
 				("inhibit_fiber", SUBJ, ADJ),
 				("inhibit_fiber", SUBJ, NOUN),
-				("inhibit_area", SUBJ, None),
+				# ("inhibit_area", SUBJ, None),
 				("inhibit_area", DET, None),
 				("inhibit_area", ADJ, None),
 				("inhibit_area", NOUN, None),
 				],
 
-
 				[
 				("disinhibit_fiber", LEX, VERB),
-				("disinhibit_area", VERB, None),
+				# ("disinhibit_area", VERB, None),
 				],
 
 				[("project_star", None, None),],
@@ -216,7 +224,7 @@ def parse_transverb(action_dict):
 				[
 				("disinhibit_fiber", VERB, VERB_P),
 				("disinhibit_fiber", VERB_P, ROOT),
-				("disinhibit_area", VERB_P, None),
+				# ("disinhibit_area", VERB_P, None),
 				],
 
 				[("project_star", None, None),],
@@ -228,8 +236,8 @@ def parse_transverb(action_dict):
 				("disinhibit_fiber", OBJ, DET),
 				("disinhibit_fiber", OBJ, ADJ),
 				("disinhibit_fiber", OBJ, NOUN),
-				("disinhibit_area", OBJ_P, None),
-				("disinhibit_area", OBJ, None),
+				# ("disinhibit_area", OBJ_P, None),
+				# ("disinhibit_area", OBJ, None),
 				],
 			]
 	return get_action_idxs(action_tuples, action_dict)
@@ -242,12 +250,12 @@ def parse_intransverb(action_dict):
 				("disinhibit_fiber", SUBJ, DET),
 				("disinhibit_fiber", SUBJ, ADJ),
 				("disinhibit_fiber", SUBJ, NOUN),
-				("disinhibit_area", SUBJ_P, None),
-				("disinhibit_area", SUBJ, None),
+				# ("disinhibit_area", SUBJ_P, None),
+				# ("disinhibit_area", SUBJ, None),
 				("disinhibit_area", DET, None),
 				("disinhibit_area", ADJ, None),
 				("disinhibit_area", NOUN, None),
-				("disinhibit_area", ROOT, None),
+				# ("disinhibit_area", ROOT, None),
 				],
 
 				[("project_star", None, None),],
@@ -257,12 +265,12 @@ def parse_intransverb(action_dict):
 				("inhibit_fiber", SUBJ, DET),
 				("inhibit_fiber", SUBJ, ADJ),
 				("inhibit_fiber", SUBJ, NOUN),
-				("inhibit_area", SUBJ, None),
+				# ("inhibit_area", SUBJ, None),
 				],
 
 				[
 				("disinhibit_fiber", LEX, VERB),
-				("disinhibit_area", VERB, None),
+				# ("disinhibit_area", VERB, None),
 				],
 
 				[("project_star", None, None),],
@@ -270,7 +278,7 @@ def parse_intransverb(action_dict):
 				[
 				("disinhibit_fiber", VERB, VERB_P),
 				("disinhibit_fiber", VERB_P, ROOT),
-				("disinhibit_area", VERB_P, None),
+				# ("disinhibit_area", VERB_P, None),
 				],
 
 				[("project_star", None, None),],
@@ -279,8 +287,8 @@ def parse_intransverb(action_dict):
 				("inhibit_fiber", LEX, VERB),
 				("inhibit_fiber", VERB_P, OBJ_P),
 				("inhibit_fiber", OBJ_P, OBJ),
-				("inhibit_area", OBJ_P, None),
-				("inhibit_area", OBJ, None),
+				# ("inhibit_area", OBJ_P, None),
+				# ("inhibit_area", OBJ, None),
 				("inhibit_area", DET, None),
 				("inhibit_area", ADJ, None),
 				("inhibit_area", NOUN, None),
@@ -299,12 +307,14 @@ def parse_adverb(action_dict):
 				("disinhibit_fiber", LEX, ADVERB),
 				("disinhibit_fiber", ADVERB, VERB_P),
 				("disinhibit_fiber", VERB_P, ROOT),
-				("disinhibit_area", ADVERB, None),
-				("disinhibit_area", VERB_P, None),
-				("disinhibit_area", ROOT, None),
+				# ("disinhibit_area", ADVERB, None),
+				# ("disinhibit_area", VERB_P, None),
+				# ("disinhibit_area", ROOT, None),
 				],
 
 				[("project_star", None, None),],
+
+				[("inhibit_fiber", LEX, ADVERB)], 
 			]
 	return get_action_idxs(action_tuples, action_dict)
 
@@ -326,7 +336,7 @@ def parse_det(action_dict):
 def parse_adj(action_dict):
 	action_tuples = [
 				[
-				("inhibit_area", PREP, None),
+				# ("inhibit_area", PREP, None),
 				("inhibit_fiber", DET, PREP_P),
 				("inhibit_fiber", NOUN, PREP_P),
 				("disinhibit_area", ADJ, None),
@@ -344,8 +354,8 @@ def parse_adj(action_dict):
 def parse_prep(action_dict):
 	action_tuples = [
 				[
-				("disinhibit_area", PREP, None),
-				("disinhibit_area", PREP_P, None),
+				# ("disinhibit_area", PREP, None),
+				# ("disinhibit_area", PREP_P, None),
 				("disinhibit_fiber", LEX, PREP),
 				("disinhibit_fiber", PREP, PREP_P),
 				("disinhibit_fiber", PREP_P, VERB_P),
@@ -362,7 +372,7 @@ def parse_prep(action_dict):
 	return get_action_idxs(action_tuples, action_dict)
 
 
-def go_activate(curid, newid, action_goto_next=[73], action_goto_prev=[74]):
+def go_activate(curid, newid, action_goto_next=[53], action_goto_prev=[54]):
 	'''
 	return a list of action idxs to activate item newid, starting from previous activated item curid
 	'''
@@ -381,7 +391,7 @@ def go_activate(curid, newid, action_goto_next=[73], action_goto_prev=[74]):
 def all_fiber_area_closed(simulator):
 	# Check whether all fibers and areas in the state vector are closed.
 	fibers_closed = np.all([simulator.state[i]==0 for i in simulator.stateidx_to_fibername.keys()])
-	areas_closed = np.all([simulator.state[simulator.area_to_stateidx[a]['opened']]==0 for a in simulator.all_areas if a!=simulator.lexicon_area])
+	areas_closed = np.all([simulator.state[simulator.area_to_stateidx[a]['opened']]==0 for a in simulator.inhibitable_areas])
 	return fibers_closed and areas_closed
 
 def calculate_unit_reward(num_valid_items, num_total_items, empty_unit, episode_max_reward=1):
@@ -422,7 +432,7 @@ def stimulate(source, destinations, assembly_dict, last_active_assembly):
 			stimulate_successes[idest] = True
 	return assembly_dict, last_active_assembly, stimulate_successes
 
-def sample_sentence(complexity, max_sentence_length, compositional, compositional_eval, compositional_holdout, verbose=False):
+def sample_sentence(complexity, max_sentence_length, spacing, compositional, compositional_eval, compositional_holdout, verbose=False):
 	'''
 	Has to be a sentence with at least 1 noun and 1 verb
 		[DET, ADJ, NOUN, VERB, DET, ADJ, NOUN, PREP, DET, NOUN, ADVERB]
@@ -581,9 +591,22 @@ def sample_sentence(complexity, max_sentence_length, compositional, compositiona
 	if len(poss)<max_sentence_length: # pad empty positions at the end, if any
 		words += [-1]*(max_sentence_length-len(words))
 		poss += [-1]*(max_sentence_length-len(poss))
+	if spacing==False: # remove spacing within a sentence structure
+		compactwords = []
+		compactposs = []
+		for i, (word, pos) in enumerate(zip(words, poss)):
+			if word!=-1:
+				assert pos!=-1, f"the {i}-th word and pos should both be nonempty\n{words}\n{poss}"
+				compactwords.append(word)
+				compactposs.append(pos)
+		compactwords += [-1] * (max_sentence_length-len(compactwords)) # pad the end with empty 
+		compactposs += [-1] * (max_sentence_length-len(compactposs))
+		assert len(compactwords)==len(compactposs), f"length of compactwords {compactwords} and compactposs {compactposs} should equal"
+		words = compactwords
+		poss = compactposs
 	return nwords, words, poss
 
-def sample_episode(difficulty_mode, cur_curriculum_level, max_complexity, max_sentence_length, compositional, compositional_eval, compositional_holdout):
+def sample_episode(difficulty_mode, cur_curriculum_level, max_complexity, max_sentence_length, spacing, compositional, compositional_eval, compositional_holdout):
 	'''
 	Create a goal sentence for the episode
 	Input
@@ -620,16 +643,23 @@ def sample_episode(difficulty_mode, cur_curriculum_level, max_complexity, max_se
 	assert complexity <= max_sentence_length, \
 		f"number of actual words {complexity} should be smaller than max_sentence_length {max_sentence_length}"
 	assert max_sentence_length==len(OUTPUT_FORMAT), f"max_sentence_length {max_sentence_length} should be {len(OUTPUT_FORMAT)}"
-	num_words, goal, roles = sample_sentence(complexity=complexity, max_sentence_length=max_sentence_length, compositional=compositional, compositional_eval=compositional_eval, compositional_holdout=compositional_holdout) 
+	num_words, goal, roles = sample_sentence(complexity=complexity, 
+											max_sentence_length=max_sentence_length, 
+											spacing=spacing, 
+											compositional=compositional, 
+											compositional_eval=compositional_eval, 
+											compositional_holdout=compositional_holdout) 
 	return num_words, goal, roles
 
 
 def close_all_fibers_areas(simulator):
 	actions = []
+	# inhibit fibers
 	for sidx, (a1,a2) in simulator.stateidx_to_fibername.items():
 		if simulator.state[sidx]==1: # fiber is open
 			actions.append(get_action_idx(('inhibit_fiber', a1, a2), simulator.action_dict))
-	for a in simulator.all_areas:
+	# inhibit areas
+	for a in simulator.inhibitable_areas:
 		sidx = simulator.area_to_stateidx[a]['opened']
 		if simulator.state[sidx]==1 and a!=simulator.lexicon_area: # area is open
 			actions.append(get_action_idx(('inhibit_area', a, None), simulator.action_dict))

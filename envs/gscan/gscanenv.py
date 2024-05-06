@@ -17,8 +17,8 @@ import numpy as np
 import random
 import pprint
 
-import envs.language.utils as utils
-from envs.language.cfg import configurations
+import envs.gscan.utils as utils
+from envs.gscan.cfg import configurations
 
 import dm_env
 from dm_env import test_utils
@@ -27,6 +27,7 @@ from acme import types, specs
 from typing import Any, Dict, Optional
 import tree
 
+from GroundedScan.dataset import GroundedScan
 
 class Simulator():
 	def __init__(self, 
@@ -36,10 +37,11 @@ class Simulator():
 				empty_unit = configurations['empty_unit'],
 				area_status = configurations['area_status'],
 				max_complexity = configurations['max_complexity'],
-				spacing = configurations['spacing'],
 				compositional = configurations['compositional'],
 				compositional_eval = configurations['compositional_eval'],
 				compositional_holdout = configurations['compositional_holdout'],
+				dataset_path = configurations['dataset_path'],
+				save_directory = configurations['save_directory'],
 				verbose=False):
 		self.all_areas, self.inhibitable_areas, self.lexicon_area, self.all_fibers, self.all_words, self.output_format = utils.init_simulator_areas()
 		self.max_sentence_length = len(self.output_format)
@@ -51,10 +53,12 @@ class Simulator():
 		self.verbose = verbose
 		self.area_status = area_status # area attributes to encode in state, default ['last_activated', 'num_lex_assemblies', 'num_total_assemblies']
 		self.max_complexity = max_complexity
-		self.spacing = spacing
 		self.compositional = compositional
 		self.compositional_eval = compositional_eval
 		self.compositional_holdout = compositional_holdout
+		self.dataset_path = dataset_path
+		self.save_directory = save_directory
+
 		self.num_fibers = len(self.all_fibers)
 		self.num_areas = len(self.all_areas)
 		self.action_dict = self.create_action_dictionary() 
@@ -62,17 +66,55 @@ class Simulator():
 		self.num_assemblies = self.max_lexicon # total number of assemblies ever created
 
 
+	def encode_initial_world(self, world):
+		empty_grid_representation = self.initialize_grid_brain(gridwidth, gridheight, ncolors, nshapes, nsizes, ndirections, nactions)
+		empty_history_representation = self.initialize_history(nsteps, ndirections, nactions)
+		formatted_goal_command = utils.format_goal_command(goal_command, self.derivation_structure)
+		empty_goal_representation = self.__initialize_goal_command(formatted_goal_command, nactions, ncolors, nsizes, nshapes, nadverbs)
+		self.grid_status = self.__initialize_grid_status(gridwidth, gridheight)
+		self.agent_status = {
+							'position': {'row': int(world['agent_position']['row']),
+										'col': int(world['agent_position']['column']),}
+							'direction': world['agent_direction'],
+							'action': None,
+							'carried_obj': None, # push or pull
+							}
+		self.goal_representation = self.encode_goal_command(world['command'])
+		self.grid_representation = self.encode_grid_brian(self.grid_status)
+		return
+
+	def __initialize_goal_command(self, formatted_goal_command, nactions, ncolors, nsizes, nshapes, nadverbs):
+		goal_repr = []
+		for i, struct in enumerate(self.derivation_structure):
+			rep = []
+			if struct=='verb':
+				rep = [0] * nactions
+			elif struct=='color':
+				rep = [0] * ncolors
+			elif struct=='size':
+				rep = [0] * nsizes
+			elif struct=='shape':
+				rep = [0] * nshapes
+			elif struct=='adverb':
+				rep = [0] * nadverbs
+			rep[formatted_goal_command[i]] = 1
+			goal_repr.append(rep)
+		return goal_repr
+
+	def __initialize_grid_status(self, width, height):
+		statusdict = {}
+		where_are_objects = utils.extract_obj_loc(placed_obj_dict)
+		for irow in range(height):
+			for icol in range(width):
+				if (irow, icol) in where_are_objects.keys():
+					statusdict[(irow, icol)] = {where_are_objects[(irow, icol)]}
+				else:
+					statusdict[(irow, icol)] = None
+
 	def reset(self, difficulty_mode='uniform', cur_curriculum_level=None):
+		self.dataset = GroundedScan.load_dataset_from_file(self.dataset_path, save_directory=self.save_directory, k=1)
 		import envs.language.cfg as config
 		cur_curriculum_level = config.configurations['curriculum']
-		self.num_words, self.goal, self.input_roles = utils.sample_episode(difficulty_mode=difficulty_mode, 
-														cur_curriculum_level=cur_curriculum_level, 
-														max_complexity=self.max_complexity,
-														max_sentence_length=self.max_sentence_length,
-														spacing=self.spacing,
-														compositional=self.compositional,
-														compositional_eval=self.compositional_eval,
-														compositional_holdout=self.compositional_holdout)
 		self.unit_reward = utils.calculate_unit_reward(num_valid_items=self.num_words, 
 													num_total_items=len(self.goal), 
 													empty_unit=self.empty_unit, 
@@ -332,7 +374,6 @@ class Simulator():
 				assembly_dict, \
 				last_active_assembly
 
-
 	def create_action_dictionary(self):
 		'''
 		Create action dictionary: a dict that contains mapping of action index to action name
@@ -432,6 +473,21 @@ class EnvWrapper(dm_env.Environment):
 		self._last_info = info
 		return dm_env.restart(observation)
 	def step(self, action: types.NestedArray) -> dm_env.TimeStep:
+
+
+		# Go over the eaxmples in the training set.
+		for i, example in enumerate(dataset.get_raw_examples(split="train")):
+			# Initialize the example in the dataset to obtain the initial state.
+			state = dataset.initialize_rl_example(example)
+			# Take actions from some policy (NB: here undefined) to interact with the environment.
+			total_reward = 0
+			done = False
+			while not done:
+				action = policy.step(state)
+				state, reward, done = dataset.take_step(action)
+				total_reward += reward
+
+
 		if self._reset_next_step:
 			return self.reset()
 		observation, reward, done, truncated, info = self._environment.step(action)
