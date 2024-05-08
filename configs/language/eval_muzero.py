@@ -18,6 +18,7 @@ from td_agents import basics
 
 import random
 import numpy as np
+import pprint
 from scipy.stats import sem
 from acme import wrappers as acme_wrappers
 import dm_env
@@ -33,6 +34,7 @@ import envs.language.utils as langutils
 
 import haiku as hk
 import jax.numpy as jnp
+
 
 
 def load_config(filename):
@@ -147,22 +149,21 @@ def load_settings(
 
 
 def make_test_environment(
-												evaluation, 
+						evaluation, 
 						eval_sentence_complexity,
 						spacing,
-												compositional, 
-												compositional_eval,
-												compositional_holdout,
-												test_sentence,
-												):
-	# create dm_env
+						compositional, 
+						compositional_eval,
+						compositional_holdout,
+						test_sentence,
+						):
 	sim = langenv.Simulator(
 						spacing=spacing,
-											evaluation=evaluation,
-											eval_sentence_complexity=eval_sentence_complexity,
-											compositional=compositional, compositional_eval=compositional_eval,
-											compositional_holdout=compositional_holdout,
-											test_sentence=test_sentence,
+						evaluation=evaluation,
+						eval_sentence_complexity=eval_sentence_complexity,
+						compositional=compositional, compositional_eval=compositional_eval,
+						compositional_holdout=compositional_holdout,
+						test_sentence=test_sentence,
 						)
 	sim.reset()
 	# insert info into cfg
@@ -181,6 +182,7 @@ def make_test_environment(
 def main(
 		eval_lvls, 
 		lvls, 
+		print_end_assbdict,
 		spacing,
 		compositional, 
 		compositional_eval, compositional_holdout,
@@ -337,6 +339,25 @@ def main(
 			lvlsolved = [] # whether the puzzle is solved
 			for irepeat in range(nrepeats):
 				print(f"irepeat {irepeat}")
+				num_words, goal_lex, goal_pos = langutils.sample_episode(
+													difficulty_mode=lvl, 
+													cur_curriculum_level=None, 
+													max_complexity=langcfg.configurations['max_complexity'], 
+													max_sentence_length=langcfg.configurations['max_sentence_length'],
+													spacing=spacing, 
+													compositional=compositional, 
+													compositional_eval=compositional_eval, 
+													compositional_holdout=compositional_holdout,
+															)
+				env, sim = make_test_environment(
+											evaluation=True,
+											spacing=None,
+											eval_sentence_complexity=None,
+											compositional=None, compositional_eval=None,
+											compositional_holdout=None,
+											test_sentence=[goal_lex, goal_pos],
+											)
+				load_outputs = load_agent(env=env, config=config, builder=builder, network_factory=network_factory, seed_path=seed_path, use_latest=True, evaluation=True)
 				reload(load_outputs.checkpointer, seed_path)
 				actor = load_outputs.actor
 				timestep = env.reset()
@@ -344,8 +365,10 @@ def main(
 				ends = False
 				t = 0
 				epsr = 0
+				actions = []
 				while not ends:
 					action = actor.select_action(timestep.observation)
+					actions.append(int(action))
 					timestep = env.step(action)
 					steptype = timestep.step_type
 					r = timestep.reward
@@ -360,6 +383,11 @@ def main(
 						else:
 							lvlsolved.append(0)
 					print(f"\tt={t}, action_name: {action_dict[int(action)]}, r={round(float(r),5)}, ends={ends}")
+				if print_end_assbdict>0 and random.random()<print_end_assbdict:
+					assbdict, lastassb = langutils.get_end_assembly_dict(sim, actions)
+					print(f"Goal words {goal_lex}\nGoal pos {goal_pos}")
+					pprint.pprint(assbdict)
+					pprint.pprint(lastassb)
 				lvlepsr.append(epsr)
 			if len(lvlsteps)==0:
 				lvlsteps=[np.nan]
@@ -455,7 +483,8 @@ if __name__ == "__main__":
 	random.seed(0)
 	main(
 		eval_lvls=True, lvls=[2], # whether to eval on varying complexity (num words)
-		nrepeats=100, # num samples for all analyses except eval_steps
+		print_end_assbdict=0.1, # whether to sample and print assembly dict at the end of an episode
+		nrepeats=50, # num samples for all analyses except eval_steps
 		groupname='Mgru2+comp-5v.7nospace', # model to load
 		spacing=False,
 		compositional=True, # whether the training setting is compositional

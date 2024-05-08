@@ -918,3 +918,8 @@ def synthetic_project(simulator, max_project_round=5, verbose=False):
 	print(f"\n--------------------- end of all project rounds,\nnum_assemblies={num_assemblies},\nlast_active_assembly={last_active_assembly},\nassembly_dict:{assembly_dict}") if verbose else 0
 	return assembly_dict, last_active_assembly, num_assemblies
 
+def get_end_assembly_dict(simulator, actions):
+	simulator.reset()
+	for t, a in enumerate(actions):
+		_, _, _, _, _ = simulator.step(a)
+	return simulator.assembly_dict, simulator.last_active_assembly
