@@ -535,19 +535,21 @@ class Simulator():
 def test_simulator(expert=True, repeat=10, verbose=False):
 	sim = Simulator(verbose=verbose)
 	pprint.pprint(sim.action_dict)
-	avg_expert_len = []
+	avg_expert_len_oracle = []
+	avg_expert_len_heuristic = []
 	for puzzle_num_blocks in range(2, sim.puzzle_max_blocks+1):
-		expert_len = []
+		expert_len_oracle = []
+		expert_len_heuristic = []
 		print(f"puzzle_num_blocks {puzzle_num_blocks}")
+		# utils.all_goal_configs(puzzle_num_blocks, sim.puzzle_max_stacks)
 		for r in range(repeat):
 			state, info = sim.reset(puzzle_num_blocks=None, curriculum=puzzle_num_blocks) # use curriculum distribution
 			# state, info = sim.reset(puzzle_num_blocks=puzzle_num_blocks, curriculum=None) # specify num blocks
 			print(f'------------ repeat {r}, state after reset\t{state}') if verbose else 0
-			# expert_demo = utils.expert_demo_plan(sim) if expert else None
 			expert_demo = utils.oracle_demo_plan(sim) if expert else None
 			rtotal = 0 # total reward of episode
 			nsteps = sim.max_steps if (not expert) else len(expert_demo)
-			print(f"expert_demo: {expert_demo}")  if verbose else 0
+			print(f"oracle expert_demo: {expert_demo}")  if verbose else 0
 			for t in range(nsteps):
 				action_idx = random.choice(list(range(sim.num_actions))) if (not expert) else expert_demo[t]
 				next_state, reward, terminated, truncated, info = sim.step(action_idx)
@@ -561,9 +563,30 @@ def test_simulator(expert=True, repeat=10, verbose=False):
 				assert terminated, "episode should be done"
 				assert np.isclose(rtotal, sim.episode_max_reward-sim.action_cost*nsteps), \
 						f"rtotal {rtotal} and theoretical total {sim.episode_max_reward-sim.action_cost*nsteps} should be roughly the same"
-				expert_len.append(len(expert_demo))
-		avg_expert_len.append(np.mean(expert_len)) if expert else 0
-	print(f"\n\navg expert demo length {avg_expert_len}\n\n")
+				expert_len_oracle.append(len(expert_demo))
+			state, info = sim.reset(puzzle_num_blocks=None, curriculum=puzzle_num_blocks) 
+			expert_demo = utils.expert_demo_plan(sim) if expert else None
+			rtotal = 0 
+			nsteps = sim.max_steps if (not expert) else len(expert_demo)
+			print(f"heuristic expert_demo: {expert_demo}")  if verbose else 0
+			for t in range(nsteps):
+				action_idx = random.choice(list(range(sim.num_actions))) if (not expert) else expert_demo[t]
+				next_state, reward, terminated, truncated, info = sim.step(action_idx)
+				rtotal += reward
+				print(f't={t},\tr={round(reward, 5)},\taction={action_idx}\t{sim.action_dict[action_idx]},\ttruncated={truncated},\tdone={terminated}') if verbose else 0
+				print(f'\tnext state {next_state}\t') if verbose else 0
+			readout = sim.decode_cur_stacks()
+			print(f'end of episode (puzzle_num_blocks={puzzle_num_blocks}), num_blocks={sim.puzzle_num_blocks}, synthetic readout {readout}, goal {sim.goal_stacks}, total reward={rtotal}')  if verbose else 0
+			if expert:
+				assert readout == sim.goal_stacks, f"readout {readout} and goal {sim.goal_stacks} should be the same"
+				assert terminated, "episode should be done"
+				assert np.isclose(rtotal, sim.episode_max_reward-sim.action_cost*nsteps), \
+						f"rtotal {rtotal} and theoretical total {sim.episode_max_reward-sim.action_cost*nsteps} should be roughly the same"
+				expert_len_heuristic.append(len(expert_demo))
+		avg_expert_len_heuristic.append(np.mean(expert_len_heuristic)) if expert else 0
+		avg_expert_len_oracle.append(np.mean(expert_len_oracle)) if expert else 0
+	print(f"\n\navg oracle expert demo length {avg_expert_len_oracle}\
+			\navg heuristic expert demo length {avg_expert_len_heuristic}\n\n")
 
 
 
@@ -696,9 +719,26 @@ class Test(test_utils.EnvironmentTestMixin, absltest.TestCase):
 			yield self.make_action()
 
 
-if __name__ == '__main__':
-	random.seed(1)
-	# test_simulator(expert=False, repeat=2000, verbose=False)
-	test_simulator(expert=True, repeat=1000, verbose=False)
+'''
+salloc -p test -t 0-01:00 --mem=200000 
 
-	absltest.main()
+module load python/3.10.12-fasrc01
+mamba activate neurorl
+
+'''
+
+if __name__ == '__main__':
+	random.seed(2)
+
+	all_configs = utils.all_goal_configs(nblocks=6, puzzle_max_stacks=5)
+	# for _ in range(1000):
+	# 	nb, ist, gst = utils.sample_random_puzzle(puzzle_max_stacks=5, puzzle_max_blocks=10, stack_max_blocks=7,
+	# 					puzzle_num_blocks=6, 
+	# 					curriculum=False, leak=False,
+	# 					compositional=True, compositional_type='newconfig', compositional_eval=False, compositional_holdout=[])
+	# 	print([len(s) for s in gst])
+
+	# test_simulator(expert=False, repeat=2000, verbose=False)
+	# test_simulator(expert=True, repeat=1000, verbose=False)
+
+	# absltest.main()

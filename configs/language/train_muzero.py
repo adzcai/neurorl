@@ -739,7 +739,7 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['Mgru2+comp-5v.7nospace']),
+            "group": tune.grid_search(['Mgru2+comp-5v.7yesspace']),
             "num_steps": tune.grid_search([500e6]),
 
             "samples_per_insert": tune.grid_search([20.0]),
@@ -751,7 +751,7 @@ def sweep(search: str = 'default'):
             "num_bins": tune.grid_search([1001]),  # for muzero
             "num_simulations": tune.grid_search([10]), # for muzero
 
-            "state_dim": tune.grid_search([1024]),
+            # "state_dim": tune.grid_search([1024]),
         }
     ]
   else:

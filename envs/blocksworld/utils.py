@@ -953,12 +953,22 @@ def expert_demo_plan(simulator):
 
 
 def _intersection(cur, goal):
+	# compare curstack and goalstack
+	# compute nblocks need to be removed from curstack
+	# compute nblocks need to be added to match goalstack
 	for i in range(len(cur)): # from bottom to top
-		if cur[i]!=goal[i] or cur[i]==goal[i]==-1:
-			ntoremove = sum([1 for b in cur[i:] if b!=-1 ])
-			ntoadd =  sum([1 for b in goal[i:] if b!=-1])
-			ncorrect = i
-			return ntoremove, ntoadd, ncorrect
+		if cur[i]!=goal[i]: # mismatch
+			nmatch = i
+			if cur[i]==-1!=goal[i]: # no more blocks in cur but more in goal
+				ntoremove = 0
+				ntoadd =  sum([1 for b in goal[i:] if b!=-1])
+			elif cur[i]!=-1==goal[i]: # no more blocks in goal but more in cur
+				ntoremove = sum([1 for b in cur[i:] if b!=-1 ])
+				ntoadd = 0
+			else: # more blocks in both cur and goal
+				ntoremove = sum([1 for b in cur[i:] if b!=-1 ])
+				ntoadd = sum([1 for b in goal[i:] if b!=-1])
+			return ntoremove, ntoadd, nmatch
 	return 0, 0, len(cur)
 
 
@@ -982,27 +992,33 @@ def oracle_demo_plan(simulator):
 	stacksntoremove = []
 	stacksntoadd = []
 	stacksncorrect = []
-	for istack in range(simulator.puzzle_max_stacks):
+	for istack in range(simulator.puzzle_max_stacks): # calculate what to remove/add
 		ntoremove, ntoadd, ncorrect = _intersection(simulator.flip(simulator.input_stacks)[istack], goal_stacks[istack])
 		stacksntoremove.append(ntoremove)
 		stacksntoadd.append(ntoadd)
 		stacksncorrect.append(ncorrect)
+	for istack in range(simulator.puzzle_max_stacks):
+		ntoremove = stacksntoremove[istack]
 		for jblock in range(ntoremove): # from top/highest to bottom/lowest
 			assert input_stacks[istack][jblock]!=-1 # no more blocks in this stack
 			action = "remove"
 			final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
 			table.append(input_stacks[istack][jblock]) # record the blocks put on table
-		if simulator.puzzle_max_stacks>1 and istack!=simulator.puzzle_max_stacks-1: # move to next stack if applicable
-			if _intersection(simulator.flip(simulator.input_stacks)[istack+1], goal_stacks[istack+1])[0] > 0:
-				action = "next_stack"
-				final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
-				cur_pointer += 1
+		if istack<simulator.puzzle_max_stacks-1 and np.any(np.array(stacksntoremove[istack+1:])>0): # move to next stack if applicable
+			action = "next_stack"
+			final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
+			cur_pointer += 1
 	# add blocks according to goal
-	while cur_pointer!=simulator.puzzle_max_stacks-1 and stacksntoadd[simulator.puzzle_max_stacks-1]>0: 
+	move_to_stack = cur_pointer  # check if need to move right
+	for tmpstack in range(min(cur_pointer+1, simulator.puzzle_max_stacks), simulator.puzzle_max_stacks):
+		if stacksntoadd[tmpstack]>0:
+			move_to_stack = tmpstack
+	for _ in range(move_to_stack-cur_pointer):
 		action = "next_stack" # check if need to start from the last stack
 		final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
 		cur_pointer += 1
-	for istack in range(cur_pointer, -1, -1):
+	assert cur_pointer == move_to_stack
+	for istack in range(cur_pointer, -1, -1): # move to left
 		ntoadd = stacksntoadd[istack]
 		ncorrect = stacksncorrect[istack]
 		for jblock in range(ncorrect, ncorrect+ntoadd): # from bottom/lowest to top/highest
@@ -1020,7 +1036,7 @@ def oracle_demo_plan(simulator):
 			table_pointer = loc # table pointer is now moved to the table stack to be added
 			action = "add" # add the block 
 			final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
-		if istack>0 and stacksntoadd[istack-1]>0:
+		if istack>0 and np.any(np.array(stacksntoadd[:istack])>0):
 			action = "previous_stack"
 			final_actions.append( list(simulator.action_dict.keys())[list(simulator.action_dict.values()).index(action)] )
 	return final_actions # list of integers representing actions
@@ -1153,26 +1169,74 @@ def sample_random_puzzle(puzzle_max_stacks, puzzle_max_blocks, stack_max_blocks,
 					break # no more remaining blocks available, done		
 		assert (len(input_stacks) <= puzzle_max_stacks) and (len(goal_stacks) <= puzzle_max_stacks),\
 			f"puzzle input {input_stacks} and goal {goal_stacks} should each have fewer than {puzzle_max_stacks} stacks"
-		# check if puzzle does not overlap with test_puzzles
+		# if input and goal are different
 		if (input_stacks != goal_stacks):
-			if [input_stacks, goal_stacks] in test_puzzles.test_puzzles:
+			if [input_stacks, goal_stacks] in test_puzzles.test_puzzles: # puzzle should not overlap with test_puzzles
 				print(f"\n\nProposed puzzle [ {input_stacks}, {goal_stacks} ] overlaps with test puzzle, keep sampling.\n\n")
+			elif compositional and compositional_type=='newconfig': # check if goal stacks satisfy compositional requirement
+				gslengths = [len(s) for s in goal_stacks] # lengths of goal stacks
+				if not compositional_eval: # training mode, should avoid holdout config
+					if gslengths not in compositional_holdout:
+						keep_sampling = False
+				else: # eval mode, only return compositional holdout
+					if gslengths in compositional_holdout:
+						keep_sampling = False
 			else:
 				keep_sampling = False
-		# check if goal stacks satisfy compositional requirement
-		if compositional and compositional_type=='newconfig':
-			gslengths = [len(s) for s in goal_stacks] # lengths of goal stacks
-			if not compositional_eval: # training mode, should avoid holdout config
-				if gslengths not in compositional_holdout:
-					keep_sampling = False
-				else:
-					keep_sampling = True
-					print(f"checking goal stack lengths {gslengths}, keep sample? {keep_sampling}")
-			else: # eval mode, only return compositional holdout
-				if gslengths not in compositional_holdout:
-					keep_sampling = True
-				else:
-					keep_sampling = False
 	return puzzle_num_blocks, input_stacks, goal_stacks
 
 
+def all_goal_configs(nblocks, puzzle_max_stacks, cur_config=[], all_configs=[]):
+	all_configs = __all_configs(nblocks, puzzle_max_stacks, cur_config, all_configs)
+	print(f"{all_configs}\n{len(all_configs)}")
+	all_configs = __remove_all_zeros(all_configs)
+	print(f"{all_configs}\n{len(all_configs)}")
+	all_configs = __remove_duplicates(all_configs)
+	random.shuffle(all_configs)
+	print(f"{all_configs}\n{len(all_configs)}")
+	return all_configs
+
+def __remove_all_zeros(matrix):
+	# Remove zeros from each sublist using list comprehension
+	return [[element for element in sublist if element != 0] for sublist in matrix]
+
+def __helper_remove_leading_and_trailing_zeros(sublist):
+	# Remove leading zeros
+	start = 0
+	while start < len(sublist) and sublist[start] == 0:
+		start += 1
+	# Remove trailing zeros
+	end = len(sublist)
+	while end > start and sublist[end - 1] == 0:
+		end -= 1
+	# Return the sublist excluding the leading and trailing zeros
+	return sublist[start:end]
+
+def __remove_leading_and_trailing_zeros(matrix):
+	# Apply the removal function to each sublist in the matrix
+	return [__helper_remove_leading_and_trailing_zeros(sublist) for sublist in matrix]
+
+def __remove_duplicates(nested_list):
+	seen = set()
+	unique_lists = []
+	for sublist in nested_list:
+		tuple_version = tuple(sublist) # only tuple can be added to a set
+		if tuple_version not in seen:
+			seen.add(tuple_version)
+			unique_lists.append(sublist)
+	return unique_lists
+
+def __all_configs(nblocks, puzzle_max_stacks, cur_config, all_configs):
+	if len(cur_config) == puzzle_max_stacks:
+		if sum(cur_config) == nblocks:
+			assert np.all(np.array(cur_config)>=0)
+			# print(cur_config)
+			all_configs.append(cur_config)
+		return all_configs
+	if len(cur_config) == puzzle_max_stacks - 1: # Last bin, determine the remaining items
+		all_configs = __all_configs(nblocks, puzzle_max_stacks, cur_config + [max(0,nblocks - sum(cur_config))], all_configs)
+	else:
+		for i in range(nblocks + 1):
+			all_configs = __all_configs(nblocks, puzzle_max_stacks, cur_config + [i], all_configs)
+	# print(f"{all_configs}\n{len(all_configs)}")
+	return all_configs

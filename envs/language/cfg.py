@@ -13,9 +13,10 @@ configurations = {
 'max_assemblies': 100, # maximum number of assemblies for each area in the state representation
 'area_status': ['last_activated', 'num_lex_assemblies', 'num_total_assemblies'], # area attributes to encode in state
 'num_actions': None, # number of actions, will be filled once env is created
+'action_dict': None, # action dictionary, will be filled once env is created
 
 'curriculum': 2, # current curriculum
-'spacing': False, # whether to fill -1s to the goal pos structure and goal lex structure
+'spacing': True, # whether to fill -1s to the goal pos structure and goal lex structure
 'compositional': True, # whether to holdout particular language sentences
 'compositional_eval': False, # whether in eval mode (if yes, only sampling compositional holdout)
 'compositional_holdout': [

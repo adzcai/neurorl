@@ -129,8 +129,8 @@ def observation_encoder(
   reward_embed = hk.Linear(128, w_init=hk.initializers.RandomNormal())
   action_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
   # backbone of the encoder: mlp with relu
-  # mlp = hk.nets.MLP([512,512,512,512], activate_final=True) # default RELU activations between layers (and after final layer)
-  mlp = hk.nets.MLP([512,512,512,512,512,512], activate_final=True) # default RELU activations between layers (and after final layer)
+  mlp = hk.nets.MLP([512,512,512,512], activate_final=True) # default RELU activations between layers (and after final layer)
+  # mlp = hk.nets.MLP([512,512,512,512,512,512], activate_final=True) # default RELU activations between layers (and after final layer)
   def fn(x, dropout_rate=None):
     # concatenate embeddings and previous reward and action
     x = jnp.concatenate((
@@ -719,7 +719,7 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['Mdeeper6onlycomp2max5-10-7']),
+            "group": tune.grid_search(['Muzsparse5onlycomp2perc25max5-10-7']),
             "num_steps": tune.grid_search([500e6]),
 
             "samples_per_insert": tune.grid_search([20.0]),

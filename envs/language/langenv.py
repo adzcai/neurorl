@@ -37,6 +37,9 @@ class Simulator():
 				area_status = configurations['area_status'],
 				max_complexity = configurations['max_complexity'],
 				spacing = configurations['spacing'],
+				evaluation = False,
+				eval_sentence_complexity = None,
+				test_sentence = None,
 				compositional = configurations['compositional'],
 				compositional_eval = configurations['compositional_eval'],
 				compositional_holdout = configurations['compositional_holdout'],
@@ -52,6 +55,9 @@ class Simulator():
 		self.area_status = area_status # area attributes to encode in state, default ['last_activated', 'num_lex_assemblies', 'num_total_assemblies']
 		self.max_complexity = max_complexity
 		self.spacing = spacing
+		self.evaluation = evaluation
+		self.eval_sentence_complexity = eval_sentence_complexity
+		self.test_sentence = test_sentence
 		self.compositional = compositional
 		self.compositional_eval = compositional_eval
 		self.compositional_holdout = compositional_holdout
@@ -67,6 +73,19 @@ class Simulator():
 		cur_curriculum_level = config.configurations['curriculum']
 		self.num_words, self.goal, self.input_roles = utils.sample_episode(difficulty_mode=difficulty_mode, 
 														cur_curriculum_level=cur_curriculum_level, 
+														max_complexity=self.max_complexity,
+														max_sentence_length=self.max_sentence_length,
+														spacing=self.spacing,
+														compositional=self.compositional,
+														compositional_eval=self.compositional_eval,
+														compositional_holdout=self.compositional_holdout)
+		if self.evaluation and self.test_sentence != None:
+			self.goal = self.test_sentence[0]
+			self.input_roles = self.test_sentence[1]
+			self.num_words = int(np.sum(np.array(self.goal)!=-1))
+		elif self.evaluation and self.eval_sentence_complexity!=None:
+			self.num_words, self.goal, self.input_roles = utils.sample_episode(difficulty_mode=self.eval_sentence_complexity, 
+														cur_curriculum_level=None, 
 														max_complexity=self.max_complexity,
 														max_sentence_length=self.max_sentence_length,
 														spacing=self.spacing,

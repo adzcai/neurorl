@@ -855,7 +855,7 @@ def main(
                                                               compositional_holdout=compositional_holdout,)
                                       
           assert nb == fixed_num_blocks
-          if len(input_stacks)==nstacks or len(goal_stacks)==nstacks:
+          if len(goal_stacks)==nstacks:
             puzzles.append([input_stacks, goal_stacks])
 
         env, sim = make_test_environment(
