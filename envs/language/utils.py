@@ -34,38 +34,41 @@ VERB_P = 'VERB_P'
 OBJ_P = 'OBJ_P'
 NOUN = 'NOUN'
 # all areas
-AREAS = [LEX, DET, NOUN, ADJ, PREP, VERB, ADVERB, SUBJ, OBJ, PREP_P, OBJ_P, SUBJ_P, VERB_P, ROOT]
-INHIBITABLE_AREAS = [DET, ADJ, NOUN]
+# AREAS = [LEX, DET, NOUN, ADJ, PREP, VERB, ADVERB, SUBJ, OBJ, PREP_P, OBJ_P, SUBJ_P, VERB_P, ROOT]
+AREAS = [LEX, DET, NOUN, VERB, SUBJ, OBJ, OBJ_P, SUBJ_P, VERB_P, ROOT]
+# INHIBITABLE_AREAS = [DET, ADJ, NOUN]
+INHIBITABLE_AREAS = [DET, NOUN]
 # all lexicon and their part of speech types
 LEXEME_DICT = {
-		'det': ['the', 'those'], 
+		'det': ['the', 'those', 'these'], 
 		'noun': ['dogs', 'cats', 'mice', 'people', 'girls', 'bags', 'books', 'glasses'], 
-		'transverb': ['chase', 'love', 'bite', 'saw', 'push'], 
-		'prep': ['with', 'over'], 
-		'adj': ['big', 'sad', 'cute', 'curious'], 
+		'transverb': ['chase', 'love', 'bite', 'saw', 'push', 'follow'], 
+		# 'prep': ['with', 'over'], 
+		# 'adj': ['big', 'sad', 'cute', 'curious'], 
 		'intransverb': ['run', 'fly', 'roll'], 
-		'adv': ['quickly', 'slowly', 'slightly'], 
+		# 'adv': ['quickly', 'slowly', 'slightly'], 
 		}
-ALL_WORDS = [w for l in LEXEME_DICT.values() for w in l]
-# context free grammar for decoding
-CFG = {
+ALL_WORDS = [w for l in LEXEME_DICT.values() for w in l] # vocabulary
+CFG = { # context free grammar for decoding
 		ROOT: [SUBJ_P, VERB_P],
-		VERB_P: [VERB, OBJ_P, PREP_P, ADVERB],
+		# VERB_P: [VERB, OBJ_P, PREP_P, ADVERB],
+		VERB_P: [VERB, OBJ_P],
 		SUBJ_P: [SUBJ], 
 		OBJ_P: [OBJ], 
-		PREP_P: [PREP, DET, NOUN],
-		SUBJ: [DET, ADJ, NOUN],
-		OBJ: [DET, ADJ, NOUN],
-		ADVERB: [LEX], # basetype
+		# PREP_P: [PREP, DET, NOUN],
+		# SUBJ: [DET, ADJ, NOUN],
+		SUBJ: [DET, NOUN],
+		# OBJ: [DET, ADJ, NOUN],
+		OBJ: [DET, NOUN],
+		# following are basetype
+		# ADVERB: [LEX], 
 		VERB: [LEX],
 		NOUN: [LEX],
 		DET: [LEX],
-		ADJ: [LEX],
-		PREP: [LEX],
+		# ADJ: [LEX],
+		# PREP: [LEX],
 		}
-baseareas = [ADVERB, VERB, NOUN, DET, ADJ, PREP]
 FIBERS = [(a1, a2) for a1 in list(CFG.keys())[::-1] for a2 in CFG[a1]]
-print(f"ALL_WORDS: {ALL_WORDS}\nAREAS: {AREAS}\nFIBERS: {FIBERS}")
 
 def output_format(cfg=CFG):
 	outformat = []
@@ -80,7 +83,11 @@ def output_format(cfg=CFG):
 				outformat += [basetype]
 	return outformat
 OUTPUT_FORMAT = output_format(CFG)
-print(f"OUTPUT_FORMAT: {OUTPUT_FORMAT}")
+print(f"ALL_WORDS ({len(ALL_WORDS)}): {ALL_WORDS}\
+		\nAREAS ({len(AREAS)}): {AREAS}\
+		\nFIBERS ({len(FIBERS)}): {FIBERS}\
+		\nPOS ({len(LEXEME_DICT.keys())}): {LEXEME_DICT.keys()}\
+		\nOUTPUT_FORMAT ({len(OUTPUT_FORMAT)}): OUTPUT_FORMAT")
 
 def synthetic_readout(simulator, cfg=CFG, verbose=False):
 	assembly_dict = copy.deepcopy(simulator.assembly_dict)
@@ -162,41 +169,33 @@ def parse_noun(action_dict):
 				[
 				("inhibit_fiber", NOUN, LEX), 
 				("inhibit_fiber", SUBJ, DET), 
-				("inhibit_fiber", SUBJ, ADJ), 
+				# ("inhibit_fiber", SUBJ, ADJ), 
 				("inhibit_fiber", SUBJ, NOUN), 
 				("inhibit_fiber", SUBJ, SUBJ_P), 
 				("inhibit_fiber", OBJ, DET), 
-				("inhibit_fiber", OBJ, ADJ),
+				# ("inhibit_fiber", OBJ, ADJ),
 				("inhibit_fiber", OBJ, NOUN), 
 				("inhibit_fiber", OBJ, OBJ_P), 
-				("inhibit_fiber", PREP_P, PREP), 
-				("inhibit_fiber", PREP_P, DET), 
-				("inhibit_fiber", PREP_P, NOUN), 
+				# ("inhibit_fiber", PREP_P, PREP), 
+				# ("inhibit_fiber", PREP_P, DET), 
+				# ("inhibit_fiber", PREP_P, NOUN), 
 				("inhibit_area", NOUN, None),
-				("inhibit_area", ADJ, None),
+				# ("inhibit_area", ADJ, None),
 				("inhibit_area", DET, None),
-				# ("inhibit_area", PREP, None),
-				# ("inhibit_area", PREP_P, None),
-				# ("inhibit_area", VERB, None),
-				# ("inhibit_area", ADVERB, None),
 				],
 			]
 	return get_action_idxs(action_tuples, action_dict)
 
 def parse_transverb(action_dict):
-	# actions to parse transitive verb
 	action_tuples = [
 				[
 				("disinhibit_fiber", ROOT, SUBJ_P),
 				("disinhibit_fiber", SUBJ_P, SUBJ),
 				("disinhibit_fiber", SUBJ, DET),
-				("disinhibit_fiber", SUBJ, ADJ),
+				# ("disinhibit_fiber", SUBJ, ADJ),
 				("disinhibit_fiber", SUBJ, NOUN),
-				# ("disinhibit_area", ROOT, None),
-				# ("disinhibit_area", SUBJ_P, None),
-				# ("disinhibit_area", SUBJ, None),
 				("disinhibit_area", DET, None),
-				("disinhibit_area", ADJ, None),
+				# ("disinhibit_area", ADJ, None),
 				("disinhibit_area", NOUN, None),
 				],
 
@@ -206,17 +205,15 @@ def parse_transverb(action_dict):
 				("inhibit_fiber", ROOT, SUBJ_P),
 				("inhibit_fiber", SUBJ_P, SUBJ),
 				("inhibit_fiber", SUBJ, DET),
-				("inhibit_fiber", SUBJ, ADJ),
+				# ("inhibit_fiber", SUBJ, ADJ),
 				("inhibit_fiber", SUBJ, NOUN),
-				# ("inhibit_area", SUBJ, None),
 				("inhibit_area", DET, None),
-				("inhibit_area", ADJ, None),
+				# ("inhibit_area", ADJ, None),
 				("inhibit_area", NOUN, None),
 				],
 
 				[
 				("disinhibit_fiber", LEX, VERB),
-				# ("disinhibit_area", VERB, None),
 				],
 
 				[("project_star", None, None),],
@@ -224,7 +221,6 @@ def parse_transverb(action_dict):
 				[
 				("disinhibit_fiber", VERB, VERB_P),
 				("disinhibit_fiber", VERB_P, ROOT),
-				# ("disinhibit_area", VERB_P, None),
 				],
 
 				[("project_star", None, None),],
@@ -234,10 +230,8 @@ def parse_transverb(action_dict):
 				("disinhibit_fiber", VERB_P, OBJ_P),
 				("disinhibit_fiber", OBJ_P, OBJ),
 				("disinhibit_fiber", OBJ, DET),
-				("disinhibit_fiber", OBJ, ADJ),
+				# ("disinhibit_fiber", OBJ, ADJ),
 				("disinhibit_fiber", OBJ, NOUN),
-				# ("disinhibit_area", OBJ_P, None),
-				# ("disinhibit_area", OBJ, None),
 				],
 			]
 	return get_action_idxs(action_tuples, action_dict)
@@ -248,14 +242,11 @@ def parse_intransverb(action_dict):
 				("disinhibit_fiber", ROOT, SUBJ_P),
 				("disinhibit_fiber", SUBJ_P, SUBJ),
 				("disinhibit_fiber", SUBJ, DET),
-				("disinhibit_fiber", SUBJ, ADJ),
+				# ("disinhibit_fiber", SUBJ, ADJ),
 				("disinhibit_fiber", SUBJ, NOUN),
-				# ("disinhibit_area", SUBJ_P, None),
-				# ("disinhibit_area", SUBJ, None),
 				("disinhibit_area", DET, None),
-				("disinhibit_area", ADJ, None),
+				# ("disinhibit_area", ADJ, None),
 				("disinhibit_area", NOUN, None),
-				# ("disinhibit_area", ROOT, None),
 				],
 
 				[("project_star", None, None),],
@@ -263,14 +254,12 @@ def parse_intransverb(action_dict):
 				[
 				("inhibit_fiber", SUBJ_P, SUBJ),
 				("inhibit_fiber", SUBJ, DET),
-				("inhibit_fiber", SUBJ, ADJ),
+				# ("inhibit_fiber", SUBJ, ADJ),
 				("inhibit_fiber", SUBJ, NOUN),
-				# ("inhibit_area", SUBJ, None),
 				],
 
 				[
 				("disinhibit_fiber", LEX, VERB),
-				# ("disinhibit_area", VERB, None),
 				],
 
 				[("project_star", None, None),],
@@ -278,7 +267,6 @@ def parse_intransverb(action_dict):
 				[
 				("disinhibit_fiber", VERB, VERB_P),
 				("disinhibit_fiber", VERB_P, ROOT),
-				# ("disinhibit_area", VERB_P, None),
 				],
 
 				[("project_star", None, None),],
@@ -287,10 +275,8 @@ def parse_intransverb(action_dict):
 				("inhibit_fiber", LEX, VERB),
 				("inhibit_fiber", VERB_P, OBJ_P),
 				("inhibit_fiber", OBJ_P, OBJ),
-				# ("inhibit_area", OBJ_P, None),
-				# ("inhibit_area", OBJ, None),
 				("inhibit_area", DET, None),
-				("inhibit_area", ADJ, None),
+				# ("inhibit_area", ADJ, None),
 				("inhibit_area", NOUN, None),
 				],
 			]
@@ -307,9 +293,6 @@ def parse_adverb(action_dict):
 				("disinhibit_fiber", LEX, ADVERB),
 				("disinhibit_fiber", ADVERB, VERB_P),
 				("disinhibit_fiber", VERB_P, ROOT),
-				# ("disinhibit_area", ADVERB, None),
-				# ("disinhibit_area", VERB_P, None),
-				# ("disinhibit_area", ROOT, None),
 				],
 
 				[("project_star", None, None),],
@@ -336,9 +319,8 @@ def parse_det(action_dict):
 def parse_adj(action_dict):
 	action_tuples = [
 				[
-				# ("inhibit_area", PREP, None),
-				("inhibit_fiber", DET, PREP_P),
-				("inhibit_fiber", NOUN, PREP_P),
+				# ("inhibit_fiber", DET, PREP_P),
+				# ("inhibit_fiber", NOUN, PREP_P),
 				("disinhibit_area", ADJ, None),
 				("disinhibit_fiber", LEX, ADJ),
 				],
@@ -372,7 +354,7 @@ def parse_prep(action_dict):
 	return get_action_idxs(action_tuples, action_dict)
 
 
-def go_activate(curid, newid, action_goto_next=[53], action_goto_prev=[54]):
+def go_activate(curid, newid, action_goto_next=[31], action_goto_prev=[32]):
 	'''
 	return a list of action idxs to activate item newid, starting from previous activated item curid
 	'''
@@ -433,6 +415,81 @@ def stimulate(source, destinations, assembly_dict, last_active_assembly):
 	return assembly_dict, last_active_assembly, stimulate_successes
 
 def sample_sentence(complexity, max_sentence_length, spacing, compositional, compositional_eval, compositional_holdout, verbose=False):
+	'''
+	Has to be a sentence with at least 1 noun and 1 verb
+		[DET, NOUN, VERB, DET, NOUN]
+		['det', 'noun', 'transverb' or 'intransverb', 'det', 'noun']
+	Return: number of real words in the sentence, word ids, partr of speech ids
+	'''	
+	structures = [] 
+	assert complexity>=2, f"complexity ({complexity}) should be >=2"
+	if complexity==2:
+		structures = [
+					[-1,'noun', 'intransverb', -1,-1,],
+					]
+	elif complexity==3:
+		structures = [
+					[-1,'noun', 'transverb', -1,'noun', ],
+					['det','noun', 'intransverb', -1,-1,],
+					]
+	elif complexity==4:
+		structures = [
+					['det','noun', 'transverb', -1,'noun', ],
+					[-1,'noun', 'transverb', 'det','noun', ],
+					]
+	elif complexity==5:
+		structures = [
+					['det','noun', 'transverb', 'det','noun',],
+					]
+	if compositional and compositional_eval:
+		assert complexity>2, f"there is no holdout structures to eval in compleixty 2, complexity ({complexity}) should be >2"
+	keep_sampling = True
+	while keep_sampling:
+		struct = random.choice(structures) # choose a random sentence structure
+		if not compositional: 
+			keep_sampling = False
+		elif compositional_eval: # comp and eval
+			if struct in compositional_holdout:
+				keep_sampling = False
+		else: # comp and train
+			if struct not in compositional_holdout:
+				keep_sampling = False
+	words, poss = [], [] # word ids, part of speech ids
+	sentence = ""
+	for r in struct:
+		w = "_, "
+		wid=-1
+		rid=-1
+		if r!=-1:
+			w = random.choice(list(LEXEME_DICT[r]))
+			wid = ALL_WORDS.index(w)
+			rid = list(LEXEME_DICT.keys()).index(r)
+			w += ", "
+		sentence += w
+		words.append(wid)
+		poss.append(rid)
+	assert len(poss)==len(words), f"len of poss {poss} should match words {words}"
+	print(f"sample sentence with complexity {complexity}, struct {struct},\nsentence: {sentence}") if verbose else 0
+	nwords = complexity # number of real words
+	if len(poss)<max_sentence_length: # pad empty positions at the end, if any
+		words += [-1]*(max_sentence_length-len(words))
+		poss += [-1]*(max_sentence_length-len(poss))
+	if spacing==False: # remove spacing within a sentence structure
+		compactwords = []
+		compactposs = []
+		for i, (word, pos) in enumerate(zip(words, poss)):
+			if word!=-1:
+				assert pos!=-1, f"the {i}-th word and pos should both be nonempty\n{words}\n{poss}"
+				compactwords.append(word)
+				compactposs.append(pos)
+		compactwords += [-1] * (max_sentence_length-len(compactwords)) # pad the end with empty 
+		compactposs += [-1] * (max_sentence_length-len(compactposs))
+		assert len(compactwords)==len(compactposs), f"length of compactwords {compactwords} and compactposs {compactposs} should equal"
+		words = compactwords
+		poss = compactposs
+	return nwords, words, poss
+
+def sample_sentence_complex(complexity, max_sentence_length, spacing, compositional, compositional_eval, compositional_holdout, verbose=False):
 	'''
 	Has to be a sentence with at least 1 noun and 1 verb
 		[DET, ADJ, NOUN, VERB, DET, ADJ, NOUN, PREP, DET, NOUN, ADVERB]
@@ -624,10 +681,10 @@ def sample_episode(difficulty_mode, cur_curriculum_level, max_complexity, max_se
 		else:
 			assert 1 <= cur_curriculum_level <= max_complexity, f"should have 1<= cur_curriculum_level ({cur_curriculum_level}) <= {mmax_sentence_lengthax_input_length}"
 			population = list(range(2, max_complexity+1)) # possible number of words
-			weights = np.zeros(max_complexity)
+			weights = np.zeros(len(population))
 			weights[cur_curriculum_level-2] += 0.7 # weight for current level
 			weights[max(cur_curriculum_level-3, 0)] += 0.15 # weight for the prev level
-			weights[: max(cur_curriculum_level-3, 1)] += 0.15 / max(cur_curriculum_level-3, 1)
+			weights[: max(cur_curriculum_level-3, 1)] += 0.15 / max(cur_curriculum_level-3, 1) # wieght for older levels
 			assert np.sum(weights)==1, f"weights {weights} should sum to 1"
 			complexity = random.choices(population=population, weights=weights, k=1)[0]
 	elif difficulty_mode=='uniform' or (type(difficulty_mode)==int and difficulty_mode==-1): 
@@ -681,16 +738,14 @@ def expert_demo_language(simulator):
 			final_actions += parse_noun(action_dict)
 		elif r=='transverb':
 			final_actions += parse_transverb(action_dict)
-		elif r=='prep':
-			final_actions += parse_prep(action_dict)
+		# elif r=='prep':
+		# 	final_actions += parse_prep(action_dict)
 		elif r=='adj':
 			final_actions += parse_adj(action_dict)
 		elif r=='intransverb':
 			final_actions += parse_intransverb(action_dict)
-		elif r=='adv':
-			final_actions += parse_adverb(action_dict)
-		# elif r=='copula':
-		# 	final_actions += parse_copula(action_dict)
+		# elif r=='adv':
+		# 	final_actions += parse_adverb(action_dict)
 		else:
 			raise ValueError(f"role type {r} is not recognized")
 		curwid = wid

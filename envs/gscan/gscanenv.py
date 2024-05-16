@@ -17,7 +17,6 @@ import numpy as np
 import random
 import pprint
 
-import envs.gscan.utils as utils
 from envs.gscan.cfg import configurations
 
 import dm_env
@@ -90,11 +89,11 @@ class Simulator():
 		self.history_length = configurations['history_length']
 
 	def encode_initial_world(self, goal_command, grid_state):
-		self.initialize_grid_areas()
-		self.initialize_history_areas()
-		self.initialize_goal_areas()
+		self.initialize_grid_areas() # empty areas
+		self.initialize_history_areas() # empty areas
+		self.initialize_goal_areas() # empty areas
 		formatted_goal_command = self.format_goal_command(goal_command)
-		self.grid_status = self.encode_grid_status(grid_state) # dict to keep track of grid
+		self.grid_status = self.encode_grid_status(grid_state) # dict to track grid
 		self.agent_status = {
 							'position': (int(world['agent_position']['row']),int(world['agent_position']['column'])),
 							'direction': world['agent_direction'],
@@ -126,7 +125,6 @@ class Simulator():
 		self.action_history = Queue(maxlen=self.history_length, fill=-1)
 		assert self.direction_history.is_full() and self.action_history.is_full()
 
-
 	def initialize_grid_areas(self):
 		self.grid_assembly_dict = {} # assembly connections
 		self.grid_active_assembly = {} # currently activated assembly
@@ -145,8 +143,10 @@ class Simulator():
 		self.grid_assembly_dict['action'] = [[[],[]] for _ in range(self.num_actions)] 
 		self.grid_active_assembly['action'] = -1
 
+	def extract_obj_loc(self, placed_obj_dict):
+		return {('irow', 'icol'): 'objid'}
 
-	def __initialize_goal(self):
+	def initialize_goal(self):
 		goal_repr = []
 		for i, struct in enumerate(self.derivation_structure):
 			rep = []
@@ -166,7 +166,7 @@ class Simulator():
 
 	def __initialize_grid_status(self, placed_obj_dict):
 		statusdict = {}
-		where_are_objects = utils.extract_obj_loc(placed_obj_dict)
+		where_are_objects = self.extract_obj_loc(placed_obj_dict)
 		for irow in range(self.grid_height):
 			for icol in range(self.grid_width):
 				if (irow, icol) in where_are_objects.keys():
@@ -185,6 +185,9 @@ class Simulator():
 		return
 
 	def close(self):
+		del self.dataset, self.dataset_path
+		del self.grid_height, self.grid_width
+		del self.grid_assembly_dict, self.grid_active_assembly
 		return 
 
 	def create_action_dictionary(self, all_actions):
@@ -207,7 +210,7 @@ def test_simulator(expert=True, repeat=1, verbose=False):
 		for r in range(repeat):
 			state, _ = sim.reset(difficulty_mode=complexity) # specify complexity
 			print(f'------------ repeat {r}, state after reset\t{state}') if verbose else 0
-			expert_demo = utils.expert_demo_language(sim) if expert else None
+			expert_demo = utils.expert_demo(sim) if expert else None
 			rtotal = 0 # total reward of episode
 			nsteps = sim.max_steps if (not expert) else len(expert_demo)
 			print(f"expert demo {expert_demo}") if verbose else 0

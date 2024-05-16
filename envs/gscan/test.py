@@ -14,9 +14,7 @@ all_actions = configurations['all_actions']
 for i, example in enumerate(dataset.get_raw_examples(split="train")):
 	if i>=1:
 		break
-	# Initialize the example in the dataset to obtain the initial state.
 	goal, state = dataset.initialize_rl_example(example)
-	# Take actions from some policy (NB: here undefined) to interact with the environment.
 	total_reward = 0
 	done = False
 	print(f"\n\ninitial state\n{state} shape {state.shape}")
@@ -27,8 +25,6 @@ for i, example in enumerate(dataset.get_raw_examples(split="train")):
 		total_reward += reward
 		print(f"\nt={t}, action={action}, reward={reward}, state:\n{state}")
 
-def extract_obj_loc(placed_obj_dict):
-	return {('irow', 'icol'): 'objid'}
 
 '''
 salloc -p test -t 0-01:00 --mem=200000 

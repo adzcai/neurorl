@@ -555,7 +555,7 @@ python envs/language/langenv.py
 
 if __name__ == "__main__":
 
-	random.seed(8)
+	random.seed(0)
 
 	test_simulator(expert=False, repeat=500, verbose=False)
 	test_simulator(expert=True, repeat=500, verbose=False)

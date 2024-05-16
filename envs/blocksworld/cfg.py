@@ -37,26 +37,27 @@ configurations = {
 	'empty_block_unit': 0.005, # reward unit to give for each correct empty block
 	'num_actions': None, # number of actions in the brain, will be filled once env is created
 	'action_dict': None, # action dict, will be filled once env is created
-	'curriculum': 6, # starting level, determine number of blocks in puzzle, in {0 (uniform), 2,..., puzzle_max_blocks}
+	'curriculum': 5, # starting level, determine number of blocks in puzzle, in {0 (uniform), 2,..., puzzle_max_blocks}
 	'leak': False, # whether to leak harder puzzles during curriculum
 	'compositional': True, # whether in compositional mode
 	'compositional_type': 'newconfig', # {None, 'newblock', 'newconfig'}, if None: do not apply compositional training, 
 															# if 'newblock': holdout a few block ids during training
 															# if 'newconfig': holdout a few stack configs during training
-	'compositional_holdout': 	[
-								[1, 2],
-								[1, 2, 1], [3, 1],
-								[1, 1, 2, 1], [1, 1, 1, 2], [1, 3, 1], [1, 2, 1, 1],
-								[3, 3], [2, 1, 1, 2], [1, 1, 2, 2], [4, 1, 1], [6], [3, 1, 1, 1], [4, 2], [1, 2, 3], 
-								], # holdout 25%
-
+	'compositional_holdout': 	
 								# [
-								# [1, 1],
-								# [1, 2], [2, 1],
-								# [1, 2, 1], [3, 1], [1, 1, 2], [1, 3],
-								# [1, 1, 2, 1], [1, 1, 1, 2], [1, 3, 1], [1, 2, 1, 1], [1, 2, 2], [5], [2, 1, 2], [3, 2], 
-								# [3, 3], [2, 1, 1, 2], [1, 1, 2, 2], [4, 1, 1], [6], [3, 1, 1, 1], [4, 2], [1, 2, 3], [3, 2, 1], [1, 1, 1, 3], [1, 2, 2, 1], [2, 2, 1, 1], [2, 3, 1], [1, 1, 3, 1], [2, 1, 3], [3, 1, 2],
-								# ], # holdout 50%
+								# [1, 2],
+								# [1, 2, 1], [3, 1],
+								# [1, 1, 2, 1], [1, 1, 1, 2], [1, 3, 1], [1, 2, 1, 1],
+								# [3, 3], [2, 1, 1, 2], [1, 1, 2, 2], [4, 1, 1], [6], [3, 1, 1, 1], [4, 2], [1, 2, 3], 
+								# ], # holdout 25%
+
+								[
+								[1, 1],
+								[1, 2], [2, 1],
+								[1, 2, 1], [3, 1], [1, 1, 2], [1, 3],
+								[1, 1, 2, 1], [1, 1, 1, 2], [1, 3, 1], [1, 2, 1, 1], [1, 2, 2], [5], [2, 1, 2], [3, 2], 
+								[3, 3], [2, 1, 1, 2], [1, 1, 2, 2], [4, 1, 1], [6], [3, 1, 1, 1], [4, 2], [1, 2, 3], [3, 2, 1], [1, 1, 1, 3], [1, 2, 2, 1], [2, 2, 1, 1], [2, 3, 1], [1, 1, 3, 1], [2, 1, 3], [3, 1, 2],
+								], # holdout 50%
 
 								# 'newconfig': [[2,1,1,1], [1,2,2], [1,4],  [3,1], [1,2,1],  [2,1]], 
 								# 'newblock': [2,3,5,7] # the list of block ids or stack config to holdout 

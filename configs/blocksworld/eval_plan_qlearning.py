@@ -1317,21 +1317,35 @@ python configs/blocksworld/eval_plan_qlearning.py
 if __name__ == "__main__":
   random.seed(0)
   main(
-        eval_lvls=True, lvls=[3,4,5], # whether to eval on varying num blocks (num stacks can vary)
+        eval_lvls=True, lvls=[2,3,4,5], # whether to eval on varying num blocks (num stacks can vary)
         eval_blocks=False, fixed_num_stacks=2, # whether to eval on varying num blocks while fixing num stacks 
         puzzle_max_stacks=5, # model config
         puzzle_max_blocks=10, # model config
         stack_max_blocks=7, # model config
-        sparse_reward=False, # whether the training is sparse reward
+        sparse_reward=True, # whether the training is sparse reward
         compositional=True, # whether the training setting is compositional
-        compositional_eval=True, # whether to eval on comp holdout
+        compositional_eval=False, # whether to eval on comp holdout
         # compositional_type='newblock', compositional_holdout=[2,3,5,7], 
-        compositional_type='newconfig', compositional_holdout=[[2,1,1,1], [1,2,2], [1,4],  [3,1], [1,2,1],  [2,1]],
+        compositional_type='newconfig', 
+        compositional_holdout=
+                            [
+                            [1, 2],
+                            [1, 2, 1], [3, 1],
+                            [1, 1, 2, 1], [1, 1, 1, 2], [1, 3, 1], [1, 2, 1, 1],
+                            [3, 3], [2, 1, 1, 2], [1, 1, 2, 2], [4, 1, 1], [6], [3, 1, 1, 1], [4, 2], [1, 2, 3], 
+                            ], # holdout 25%
+                # [
+								# [1, 1],
+								# [1, 2], [2, 1],
+								# [1, 2, 1], [3, 1], [1, 1, 2], [1, 3],
+								# [1, 1, 2, 1], [1, 1, 1, 2], [1, 3, 1], [1, 2, 1, 1], [1, 2, 2], [5], [2, 1, 2], [3, 2], 
+								# [3, 3], [2, 1, 1, 2], [1, 1, 2, 2], [4, 1, 1], [6], [3, 1, 1, 1], [4, 2], [1, 2, 3], [3, 2, 1], [1, 1, 1, 3], [1, 2, 2, 1], [2, 2, 1, 1], [2, 3, 1], [1, 1, 3, 1], [2, 1, 3], [3, 1, 2],
+								# ], # holdout 50%
         eval_test_puzzles=False, # whether to eval on 100 jBrain puzzles
         eval_num_stacks=False, fixed_num_blocks=4, # whether to vary num stacks while fixing num block
-        eval_steps=False, max_oracle_steps=40, nsamples=500, # whether to eval on varying solution lengths
-        nrepeats=60, # num samples for all analyses except eval_steps
-        groupname='Q5onlycomp2max5-10-7', # which model to load
+        eval_steps=False, max_oracle_steps=40, nsamples=1000, # whether to eval on varying solution lengths
+        nrepeats=200, # num samples for all analyses except eval_steps
+        groupname='Qsparse5onlycomp2perc25max5-10-7', # which model to load
       )
 
 '''

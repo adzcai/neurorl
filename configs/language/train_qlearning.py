@@ -10,11 +10,11 @@ python configs/language/train_qlearning.py \
   --parallel='sbatch' \
   --num_actors=1 \
   --use_wandb=True \
-  --partition=gpu \
+  --partition=gpu_test \
   --wandb_entity=yichenli \
   --wandb_project=language \
   --run_distributed=True \
-  --time=0-72:00:00 
+  --time=0-12:00:00 
 
 // test in interactive session
 python configs/language/train_qlearning.py \
@@ -63,12 +63,12 @@ import library.networks as networks
 from envs.language import langenv
 from envs.language.cfg import configurations 
 
-obsfreq = 5000 # frequency to call observer
-plotfreq = 0.1#50000 # frequency to plot action trajectory
+obsfreq = 2000 # frequency to call observer
+plotfreq = 2000 # frequency to plot action trajectory
 UP_PRESSURE_THRESHOLD = 5 # pressure threshold to increase curriculum
 DOWN_PRESSURE_THRESHOLD = 10 # pressure threshold to decrease curriculum
-UP_REWARD_THRESHOLD = 2 #0.8 # upper reward threshold for incrementing up pressure
-DOWN_REWARD_THRESHOLD = -2 #0.5 # lower reward threshold for incrementing down pressure
+UP_REWARD_THRESHOLD = 0.7 # upper reward threshold for incrementing up pressure
+DOWN_REWARD_THRESHOLD = -5 #0.5 # lower reward threshold for incrementing down pressure
 up_pressure = 0 # initial up pressure
 down_pressure = 0 # initial down pressure
 
@@ -92,13 +92,16 @@ FLAGS = flags.FLAGS
 State = jax.Array
 
 
+
 def observation_encoder(
     inputs: acme_wrappers.observation_action_reward.OAR,
     num_actions: int,
     max_sentence_length: int=configurations['max_sentence_length'],
     num_fibers: int=configurations['num_fibers'],
     num_areas: int=configurations['num_areas'],
-    max_assemblies: int=configurations['max_assemblies']):
+    max_assemblies: int=configurations['max_assemblies'],
+    num_pos: int=configurations['num_pos'],
+    num_words: int=configurations['num_words'],):
   """
   A neural network to encode the environment observation / state.
   In the case of parsing blocks, 
@@ -119,32 +122,45 @@ def observation_encoder(
     The output of the neural network, ie. the encoded representation.
   """
   # embeddings for different elements in state repr
-  curlex_embed = hk.Linear(512, w_init=hk.initializers.TruncatedNormal())
+  curlex_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
   cut1 = max_sentence_length # state idx as cutting point
-  goallex_embed = hk.Linear(512, w_init=hk.initializers.TruncatedNormal())
+  goallex_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
   cut2 = cut1+max_sentence_length
-  goalpos_embed = hk.Linear(512, w_init=hk.initializers.TruncatedNormal())
+  goalpos_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
   cut3 = cut2+max_sentence_length
-  fiber_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+  fiber_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
   cut4 = cut3+num_fibers
   area_embed1 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
   cut5 = cut4+num_areas
-  area_embed2 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+  area_embed2 = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
   cut6 = cut5+num_areas
-  area_embed3 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+  area_embed3 = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
   cut7 = cut6+num_areas
-  area_embed4 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
+  area_embed4 = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
   # embeddings for prev reward and action
   reward_embed = hk.Linear(128, w_init=hk.initializers.RandomNormal())
-  action_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
-  # backbone of the encoder: mlp with relu
+  action_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+  # GRU for goallex and goalpos
+  gru = hk.GRU(512)
+  # backbone of the encoder
   mlp = hk.nets.MLP([512,512,512,512], activate_final=True) # default RELU activations between layers (and after final layer)
   def fn(x, dropout_rate=None):
+    # process gru
+    gru_input = jnp.concatenate((
+                        goallex_embed(jax.nn.one_hot(x.observation[cut1:cut2], num_words)),
+                        goalpos_embed(jax.nn.one_hot(x.observation[cut2:cut3], num_pos)),
+                        ), axis=1)
+    state = gru.initial_state(None)
+    output_sequence, final_state = hk.static_unroll(core=gru, input_sequence=gru_input, initial_state=state, time_major=True)
+    goal_repr = jnp.sum(output_sequence, axis=0) # sum along time dimension
+    # goal_repr = output_sequence[-1, :] # use the last timestep
+    print(f"gru_input shape {gru_input.shape} \noutput_sequence shape {output_sequence.shape} \ngoal_repr shape {goal_repr.shape}")
     # concatenate embeddings and previous reward and action
     x = jnp.concatenate((
-        curlex_embed(x.observation[:cut1].reshape(-1)),
-        goallex_embed(x.observation[cut1:cut2].reshape(-1)),
-        goalpos_embed(x.observation[cut2:cut3].reshape(-1)),
+        curlex_embed(jax.nn.one_hot(x.observation[:cut1], num_words).reshape(-1)),
+        # goallex_embed(jax.nn.one_hot(x.observation[cut1:cut2], num_words).reshape(-1)),
+        # goalpos_embed(jax.nn.one_hot(x.observation[cut2:cut3], num_pos).reshape(-1)),
+        goal_repr,
         fiber_embed(jax.nn.one_hot(x.observation[cut3:cut4], 2).reshape(-1)),
         area_embed1(jax.nn.one_hot(x.observation[cut4:cut5], 2).reshape(-1)),
         area_embed2(jax.nn.one_hot(x.observation[cut5:cut6], max_assemblies).reshape(-1)),
@@ -162,6 +178,7 @@ def observation_encoder(
   if has_batch_dim: # have batch dimension
     fn = jax.vmap(fn)
   return fn(inputs)
+
 
 
 def make_qlearning_networks(
@@ -243,8 +260,6 @@ class QObserver(basics.ActorObserver):
       return
     if not self.logging:
       return 
-
-    print('\n\nlogging!')
     import envs.language.cfg as langcfg
     max_steps = langcfg.configurations['max_steps']
     curriculum = langcfg.configurations['curriculum']
@@ -268,12 +283,14 @@ class QObserver(basics.ActorObserver):
     # log the metrics
     results["actions"] = actions
     results["action_names"] = action_names
-    results["q_values"] = q_values
     results["rewards"] = rewards
     results["observations"] = observations 
     # plot actions
     if self.idx % self.plot_every == 0: 
-      fig, ax = plt.subplots(max_steps//10, 10, figsize=(30, 6*(max_steps//10)))
+      max_sentence_length = langcfg.configurations['max_sentence_length']
+      num_fibers = langcfg.configurations['num_fibers']
+      num_areas = langcfg.configurations['num_areas']
+      fig, ax = plt.subplots(max_steps//10, 10, figsize=(38, 6*(max_steps//10)))
       cut1 = max_sentence_length # state idx as cutting point
       cut2 = cut1+max_sentence_length
       cut3 = cut2+max_sentence_length
@@ -281,27 +298,43 @@ class QObserver(basics.ActorObserver):
       cut5 = cut4+num_areas
       cut6 = cut5+num_areas
       cut7 = cut6+num_areas
+      '''
+        state
+        [cur lex readout (initialized as all -1s),
+        goal lex (padding with -1),
+        goal part of speech (padding -1 at the end),
+        fiber inhibition status (initialized as all closed 0s),
+        area inhibition status (initialized as all closed 0s),
+        last activated assembly idx in the area (initialized as all -1s), 
+        number of lexicon-connected assemblies in each area (initialized as 0s, or max_lexicon for lexicon area),
+        number of all assemblies in each area (initialized as 0s, or max_lexicon for lexicon area),
+        ]
+      '''
       for t in range(npreds):
         irow = t//10
         jcol = t%10
-        ax[irow,jcol].axhline(y=19, xmin=0, xmax=10)
-        ax[irow,jcol].text(0.2, 13.5, f"Curr:\n{observations[t][:cut1].reshape(configurations['puzzle_max_stacks'], configurations['stack_max_blocks'])}", 
+        ax[irow,jcol].axhline(y=9, xmin=0, xmax=14)
+        ax[irow,jcol].text(0.2, 8, f"Curr lex:\n{observations[t][:cut1]}", 
                           style='italic', bbox={'facecolor': 'orange', 'alpha': 0.2, 'pad': 1})
-        ax[irow,jcol].text(0.2, 8, f"Goal:\n{observations[t][cut1:cut2].reshape(configurations['puzzle_max_stacks'], configurations['stack_max_blocks'])}", 
+        ax[irow,jcol].text(0.2, 7, f"Goal lex:\n{observations[t][cut1:cut2]}", 
                           style='italic', bbox={'facecolor': 'green', 'alpha': 0.2, 'pad': 1})
-        ax[irow,jcol].text(0.2, 5, f"Table:\n{observations[t][cut2:cut3].reshape(min(2, configurations['puzzle_max_blocks']//7),-1)}", 
-                          style='italic', bbox={'facecolor': 'gray', 'alpha': 0.2, 'pad': 1})
-        ax[irow,jcol].text(0.2, 3, f"Correct: {observations[t][cut3:cut4]}", 
+        ax[irow,jcol].text(0.2, 6, f"Goal pos:\n{observations[t][cut2:cut3]}", 
+                          style='italic', bbox={'facecolor': 'green', 'alpha': 0.2, 'pad': 1})
+        ax[irow,jcol].text(0.2, 5, f"Fiber inhibition:\n{observations[t][cut3:cut4]}", 
                           style='italic', bbox={'facecolor': 'blue', 'alpha': 0.2, 'pad': 1})
-        ax[irow,jcol].text(0.2, 2, f"Spointer: {observations[t][cut4:cut5]}, Tpointer: {observations[t][cut5:cut6]}", 
+        ax[irow,jcol].text(0.2, 4, f"Area inhibition:\n{observations[t][cut4:cut5]}", 
+                          style='italic', bbox={'facecolor': 'blue', 'alpha': 0.2, 'pad': 1})
+        ax[irow,jcol].text(0.2, 2.5, f"Active assb:\n{observations[t][cut5:cut6]}", 
                           style='italic', bbox={'facecolor': 'white', 'alpha': 0.2, 'pad': 1})
-        ax[irow,jcol].text(0.2, 1, f"Iparsed: {observations[t][cut6:cut7]}, Gparsed: {observations[t][cut7:]}", 
+        ax[irow,jcol].text(0.2, 1.5, f"Num lex-assb:\n{observations[t][cut6:cut7]}", 
+                          style='italic', bbox={'facecolor': 'white', 'alpha': 0.2, 'pad': 1})
+        ax[irow,jcol].text(0.2, 0.5, f"Num all-assb:\n{observations[t][cut7:]}", 
                           style='italic', bbox={'facecolor': 'white', 'alpha': 0.2, 'pad': 1})
         ax[irow,jcol].set_xticks([])
         ax[irow,jcol].set_yticks([])
-        ax[irow,jcol].set_ylim(0,19.1)
-        ax[irow,jcol].set_xlim(0,10.1)
-        ax[irow,jcol].set_title(f"A={action_names[t]}\nR={round(float(rewards[t]),5)}\nQ={round(float(q_values[t]),5)}")
+        ax[irow,jcol].set_ylim(0,9.1)
+        ax[irow,jcol].set_xlim(0,14.1)
+        ax[irow,jcol].set_title(f"{action_names[t]}\nR={round(float(rewards[t]),5)}", fontsize=12)
       plt.suptitle(t=f"Curriculum {curriculum}, up_pressure {up_pressure} / {UP_PRESSURE_THRESHOLD}, down_pressure {down_pressure} / {tmp_down_threshold}\nepisode reward={episode_reward}",
                     x=0.5, y=0.89)
       self.wandb_log({f"{self.prefix}/trajectory": wandb.Image(fig)})
@@ -647,12 +680,12 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['Q2only-2v2']),
+            "group": tune.grid_search(['QTgru-uniform-compyesspace-sumgru']),
             "num_steps": tune.grid_search([500e6]),
 
             "samples_per_insert": tune.grid_search([20.0]),
-            "batch_size": tune.grid_search([128]),
-            "trace_length": tune.grid_search([10]),
+            "batch_size": tune.grid_search([256]),
+            "trace_length": tune.grid_search([10,20]),
             "learning_rate": tune.grid_search([1e-3]),
             "agent": tune.grid_search(['qlearning']),
             "state_dim": tune.grid_search([1024]),

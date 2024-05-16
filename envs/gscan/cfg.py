@@ -8,7 +8,6 @@ configurations = {
 'history_length': 10,
 
 'all_actions': ["turn left", "turn right", "walk", "run", "jump", "push", "pull", "stay"],
-'num_actions': 8, 
 
 'shapes': ["circle", "square", "cylinder"],
 'colors': ["red", "blue", "green", "yellow"],
@@ -27,3 +26,5 @@ configurations = {
 
 
 }
+
+configurations['num_actions'] = len(configurations['all_actions'])
