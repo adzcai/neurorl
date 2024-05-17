@@ -10,11 +10,11 @@ python configs/language/train_qlearning.py \
   --parallel='sbatch' \
   --num_actors=1 \
   --use_wandb=True \
-  --partition=gpu_test \
+  --partition=gpu \
   --wandb_entity=yichenli \
   --wandb_project=language \
   --run_distributed=True \
-  --time=0-12:00:00 
+  --time=0-72:00:00 
 
 // test in interactive session
 python configs/language/train_qlearning.py \
@@ -680,7 +680,7 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['QTgru-uniform-compyesspace-sumgru']),
+            "group": tune.grid_search(['Q-uniform-compyesspace-sumgru']),
             "num_steps": tune.grid_search([500e6]),
 
             "samples_per_insert": tune.grid_search([20.0]),

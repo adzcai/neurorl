@@ -18,7 +18,6 @@ configurations = {
 'intransverbs': ["walk"],
 'directions': ["e", "s", "w", "n"],
 
-
 'num_fibers': None, # will be filled once env is created
 'num_areas': None, #will be filled once env is created
 'max_assemblies': 50, # maximum number of assemblies for each area in the state representation
@@ -28,3 +27,10 @@ configurations = {
 }
 
 configurations['num_actions'] = len(configurations['all_actions'])
+configurations['num_colors'] = len(configurations['colors'])
+configurations['num_sizes'] = len(configurations['sizes'])
+configurations['num_size_descriptions'] = len(configurations['size_descriptions'])
+configurations['num_manners'] = len(configurations['manners'])
+configurations['num_transverbs'] = len(configurations['transverbs'])
+configurations['num_intransverbs'] = len(configurations['intransverbs'])
+configurations['num_directions'] = len(configurations['directions'])

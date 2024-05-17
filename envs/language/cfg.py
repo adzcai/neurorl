@@ -15,7 +15,7 @@ configurations = {
 'num_actions': None, # number of actions, will be filled once env is created
 'action_dict': None, # action dictionary, will be filled once env is created
 
-'curriculum': 5, # current curriculum
+'curriculum': 2, # current curriculum
 'spacing': False, # whether to fill -1s to the goal pos structure and goal lex structure
 'compositional': True, # whether to holdout particular language sentences
 'compositional_eval': False, # whether in eval mode (if yes, only sampling compositional holdout)

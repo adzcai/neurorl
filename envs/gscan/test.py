@@ -18,6 +18,7 @@ for i, example in enumerate(dataset.get_raw_examples(split="train")):
 	total_reward = 0
 	done = False
 	print(f"\n\ninitial state\n{state} shape {state.shape}")
+	print(f"\ngoal {goal}")
 	# while not done:
 	for t in range(1):
 		action = random.choice(all_actions)

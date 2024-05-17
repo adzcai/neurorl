@@ -84,102 +84,149 @@ class Simulator():
 		self.num_intransverbs = len(self.intransverbs)
 		self.directions = configurations['directions']
 		self.num_directions = len(self.directions)
+		assert self.num_directions==configurations['num_directions']
 		self.grid_width = configurations['grid_width']
 		self.grid_height = configurations['grid_height']
 		self.history_length = configurations['history_length']
 
-	def encode_initial_world(self, goal_command, grid_state):
-		self.initialize_grid_areas() # empty areas
-		self.initialize_history_areas() # empty areas
-		self.initialize_goal_areas() # empty areas
-		formatted_goal_command = self.format_goal_command(goal_command)
-		self.grid_status = self.encode_grid_status(grid_state) # dict to track grid
-		self.agent_status = {
-							'position': (int(world['agent_position']['row']),int(world['agent_position']['column'])),
-							'direction': world['agent_direction'],
-							'action': None, # current action 
-							'carried_obj': None, # obj with push or pull
-							}
-		self.encode_goal_areas(formatted_goal_command)
-		self.encode_grid_areas(self.grid_status)
+	def reset(self, dataset_path=configurations['dataset_path'], split=configurations['split'], save_directory=configurations['save_directory']):
+		self.dataset = GroundedScan.load_dataset_from_file(self.dataset_path, save_directory=self.save_directory, k=1)
+		example = dataset.get_raw_examples(split=split)
+		raw_goal_command, raw_grid = dataset.initialize_rl_example(example)
+		state = self.encode_initial_world(raw_goal_command, raw_grid)
+		info = None
+		return state, None
+
+	def encode_initial_world(self, raw_goal_command, raw_grid):
+		self.formatted_goal = self.format_goal(raw_goal_command)
+		self.goal_representation = self.encode_goal_representation(self.formatted_goal)
+		self.action_history, self.direction_history = self.initialize_history_representation()
+		self.grid_info = self.encode_raw_grid(raw_grid) # dict to track grid		
+		self.grid_assembly_dict, self.grid_active_assembly = self.encode_grid_representation(self.grid_info)
+		self.state = self.assembly_to_state(
+										self.grid_assembly_dict, 
+										self.grid_active_assembly,
+										self.action_history, self.direction_history,
+										self.goal_representation,
+										)
+		return self.state
+
+	def assembly_to_state(self, grid_assembly_dict, grid_active_assembly, ):
+		self.grid_assembly_dict
+		self.grid_active_assembly
+		self.
 		
-	def encode_grid_status(self, grid_state):
-		self.grid_status = {}
-		for irow in self.grid_height:
-			for jcol in self.grid_width:
-				vec = grid_state[irow, jcol]
-				self.grid_status[(irow, jcol)] = {}
-				self.grid_status[(irow, jcol)]['hasobj'] = np.any(np.array(vec[:-5])>0)
-				self.grid_status[(irow, jcol)]['size'] = np.argmax(vec[:self.num_sizes]) or -1
-				self.grid_status[(irow, jcol)]['color'] = np.argmax(vec[self.num_sizes:self.num_sizes+self.num_colors])
-				self.grid_status[(irow, jcol)]['shape'] = np.argmax(vec[self.num_sizes+self.num_colors:self.num_sizes+self.num_colors+self.num_shapes])
-				if vec[-5]==1: # has agent
-					self.agent_status['position'] = (irow, jcol)
-					self.agent_status['direction'] = np.argmax(vec[-4:])
+	def format_goal(self, raw_goal_command):
+		formatted = {}
+		for gstruct in self.goal_template: 
+			formatted[gstruct] = None
+		for word in raw_goal_command:
+			if word in self.transverbs:
+				wid = self.transverb.index(word)
+				formatted['action'] = (word, wid)
+			elif word in self.intransverbs:
+				wid = self.intransverb.index(word)
+				formatted['action'] = (word, wid)
+			elif word in self.colors:
+				wid = self.colors.index(word)
+				formatted['color'] = (word, wid)
+			elif word in self.sizes:
+				wid = self.sizes.index(word)
+				formatted['size'] = (word, wid)
+			elif word in self.shapes:
+				wid = self.shapes.index(word)
+				formatted['shape'] = (word, wid)
+			elif word in self.manners:
+				wid = self.manners.index(word)
+				formatted['manner'] = (word, wid)
+			else:
+				print(f"omitting goal word {word}")
+		return formatted
 
-	def initialize_goal_areas(self):
+	def encode_goal_representation(self, formatted_goal): 
+		# record assembly id for the goal elements
 		self.goal_representation = [-1] * len(self.goal_template)
+		for i, gstruct in enumerate(self.goal_template):
+			if formatted_goal[gstruct]!=None:
+				(word, wid) = formatted_goal[gstruct]
+				self.goal_representation[i] = wid
+		return self.goal_representation
 
-	def initialize_history_areas(self):
+	def initialize_history_representation(self):
+		# FIFO queue for the last active assembly id
 		self.direction_history = Queue(maxlen=self.history_length, fill=-1)
 		self.action_history = Queue(maxlen=self.history_length, fill=-1)
 		assert self.direction_history.is_full() and self.action_history.is_full()
+		return self.direction_history, self.action_history
 
-	def initialize_grid_areas(self):
-		self.grid_assembly_dict = {} # assembly connections
+	def encode_raw_grid(self, raw_grid):
+		self.grid_info = {}
+		for irow in self.grid_height:
+			for jcol in self.grid_width:
+				vec = raw_grid[irow, jcol]
+				self.grid_info[(irow, jcol)] = {}
+				self.grid_info[(irow, jcol)]['hasobj'] = np.any(np.array(vec[:-5])>0)
+				self.grid_info[(irow, jcol)]['size'] = np.argmax(vec[:self.num_sizes]) or -1
+				self.grid_info[(irow, jcol)]['color'] = np.argmax(vec[self.num_sizes:self.num_sizes+self.num_colors])
+				self.grid_info[(irow, jcol)]['shape'] = np.argmax(vec[self.num_sizes+self.num_colors:self.num_sizes+self.num_colors+self.num_shapes])
+				if vec[-5]==1: # has agent
+					self.grid_info['agent_position'] = (irow, jcol)
+					self.grid_info['agent_direction'] = np.argmax(vec[-4:])
+					# self.grid_info['agent_action'] = None # current action 
+					# self.grid_info['agent_carried_obj']: None, # obj with push or pull
+		return self.grid_info
+
+			
+	def encode_grid_representation(self, grid_info):
+		self.grid_assembly_dict = {} # assembly dict for grid
 		self.grid_active_assembly = {} # currently activated assembly
-		for irow in range(self.grid_height): # area of each grid position
-			for jcol in range(self.grid_width):
+		for irow in range(self.grid_height): # each grid position
+			for jcol in range(self.grid_width): # init empty
 				self.grid_assembly_dict[(irow, jcol)] = []
 				self.grid_active_assembly[(irow, icol)] = -1
+		# init long term areas
 		self.grid_assembly_dict['color'] = [[[],[]] for _ in range(self.num_colors)] 
 		self.grid_active_assembly['color'] = -1
 		self.grid_assembly_dict['shape'] = [[[],[]] for _ in range(self.num_shapes)] 
 		self.grid_active_assembly['shape'] = -1
 		self.grid_assembly_dict['size'] = [[[],[]] for _ in range(self.num_sizes)] 
 		self.grid_active_assembly['size'] = -1
-		self.grid_assembly_dict['direction'] = [[[],[]] for _ in range(self.num_directions)] 
-		self.grid_active_assembly['direction'] = -1
-		self.grid_assembly_dict['action'] = [[[],[]] for _ in range(self.num_actions)] 
-		self.grid_active_assembly['action'] = -1
+		self.grid_assembly_dict['agent_direction'] = [[[],[]] for _ in range(self.num_directions)] 
+		self.grid_active_assembly['agent_direction'] = -1
+		# self.grid_assembly_dict['agent_action'] = [[[],[]] for _ in range(self.num_actions)] 
+		# self.grid_active_assembly['agent_action'] = -1
+		# encode grid info
+		for irow in self.grid_height:
+			for jcol in self.grid_width:
+				thisgrid = grid_info[(irow, jcol)]
+				if thisgrid['hasobj']: 
+					color = thisgrid['color']
+					shape = thisgrid['shape']
+					size = thisgrid['size']
+					self.grid_assembly_dict[(irow, jcol)].append([['color', 'shape', 'size'], [color, shape, size]])
+					self.grid_active_assembly[(irow, jcol)] = 0
+					self.grid_assembly_dict['color'][color][0].append((irow, jcol))
+					self.grid_assembly_dict['color'][color][1].append(0)
+					self.grid_assembly_dict['shape'][shape][0].append((irow, jcol))
+					self.grid_assembly_dict['shape'][shape][1].append(0)
+					self.grid_assembly_dict['size'][size][0].append((irow, jcol))
+					self.grid_assembly_dict['size'][size][1].append(0)
+				if grid_info['agent_position']==(irow, jcol): # if agent is here
+					direction = grid_info['agent_direction']
+					self.grid_active_assembly['agent_direction'] = direction
+					if self.grid_assembly_dict[(irow, jcol)] != []: # merge with obj assembly
+						assbid = len(self.grid_assembly_dict[(irow, jcol)])-1
+						self.grid_assembly_dict[(irow, jcol)][assbid][0].append('agent_direction')
+						self.grid_assembly_dict[(irow, jcol)][assbid][0].append(direction)
+						self.grid_active_assembly[(irow, jcol)] = assbdict
+						self.grid_assembly_dict['agent_direction'][direction][0].append((irow, jcol))
+						self.grid_assembly_dict['agent_direction'][direction][1].append(assbdict)
+					else: # create new assembly
+						self.grid_assembly_dict[(irow, jcol)].append([['agent_direction'], [direction]])
+						self.grid_active_assembly[(irow, jcol)] = 0
+						self.grid_assembly_dict['agent_direction'][direction][0].append((irow, jcol))
+						self.grid_assembly_dict['agent_direction'][direction][1].append(0)
 
-	def extract_obj_loc(self, placed_obj_dict):
-		return {('irow', 'icol'): 'objid'}
-
-	def initialize_goal(self):
-		goal_repr = []
-		for i, struct in enumerate(self.derivation_structure):
-			rep = []
-			if struct=='verb':
-				rep = [0] * nactions
-			elif struct=='color':
-				rep = [0] * ncolors
-			elif struct=='size':
-				rep = [0] * nsizes
-			elif struct=='shape':
-				rep = [0] * nshapes
-			elif struct=='adverb':
-				rep = [0] * nadverbs
-			rep[formatted_goal_command[i]] = 1
-			goal_repr.append(rep)
-		return goal_repr
-
-	def __initialize_grid_status(self, placed_obj_dict):
-		statusdict = {}
-		where_are_objects = self.extract_obj_loc(placed_obj_dict)
-		for irow in range(self.grid_height):
-			for icol in range(self.grid_width):
-				if (irow, icol) in where_are_objects.keys():
-					statusdict[(irow, icol)] = {where_are_objects[(irow, icol)]}
-				else:
-					statusdict[(irow, icol)] = None
-
-	def reset(self, dataset_path=configurations['dataset_path'], split=configurations['split'], save_directory=configurations['save_directory']):
-		self.dataset = GroundedScan.load_dataset_from_file(self.dataset_path, save_directory=self.save_directory, k=1)
-		example = dataset.get_raw_examples(split=split)
-		state = dataset.initialize_rl_example(example)
-		info = None
-		return state, None
 	
 	def create_state_representation(self):
 		return
@@ -191,8 +238,7 @@ class Simulator():
 		return 
 
 	def create_action_dictionary(self, all_actions):
-		# map action idx to action name
-		action_dict = {} 
+		action_dict = {} # map action idx to action name
 		for i, a in enumerate(all_actions):
 			action_dict[i] = a
 		return action_dict

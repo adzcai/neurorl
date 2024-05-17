@@ -68,7 +68,7 @@ class Simulator():
 		self.num_assemblies = self.max_lexicon # total number of assemblies ever created
 
 
-	def reset(self, difficulty_mode='uniform', cur_curriculum_level=None):
+	def reset(self, difficulty_mode='curriculum', cur_curriculum_level=None):
 		import envs.language.cfg as config
 		cur_curriculum_level = config.configurations['curriculum']
 		self.num_words, self.goal, self.input_roles = utils.sample_episode(difficulty_mode=difficulty_mode, 

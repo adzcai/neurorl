@@ -236,8 +236,7 @@ def main(
 		reward_embed = hk.Linear(128, w_init=hk.initializers.RandomNormal())
 		action_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
 		# GRU for goallex and goalpos
-		gru = hk.GRU(512, w_i_init=hk.initializers.TruncatedNormal(), b_init=hk.initializers.TruncatedNormal())
-		gru_out_embed = hk.Linear(512, w_init=hk.initializers.TruncatedNormal())
+		gru = hk.GRU(512)
 		# backbone of the encoder
 		mlp = hk.nets.MLP([512,512,512,512], activate_final=True) # default RELU activations between layers (and after final layer)
 		def fn(x, dropout_rate=None):
@@ -249,18 +248,18 @@ def main(
 			state = gru.initial_state(None)
 			output_sequence, final_state = hk.static_unroll(core=gru, input_sequence=gru_input, initial_state=state, time_major=True)
 			goal_repr = jnp.sum(output_sequence, axis=0) # sum along time dimension
-			# print(f"gru_input shape {gru_input.shape} \noutput_sequence shape {output_sequence.shape} \ngoal_repr shape {goal_repr.shape}")
+			# goal_repr = output_sequence[-1, :] # use the last timestep
 			# concatenate embeddings and previous reward and action
 			x = jnp.concatenate((
 				curlex_embed(jax.nn.one_hot(x.observation[:cut1], num_words).reshape(-1)),
-				gru_out_embed(goal_repr.reshape(-1)),
+				goal_repr,
 				fiber_embed(jax.nn.one_hot(x.observation[cut3:cut4], 2).reshape(-1)),
 				area_embed1(jax.nn.one_hot(x.observation[cut4:cut5], 2).reshape(-1)),
 				area_embed2(jax.nn.one_hot(x.observation[cut5:cut6], max_assemblies).reshape(-1)),
 				area_embed3(jax.nn.one_hot(x.observation[cut6:cut7], max_assemblies).reshape(-1)),
 				area_embed4(jax.nn.one_hot(x.observation[cut7:], max_assemblies).reshape(-1)),
 				reward_embed(jnp.expand_dims(x.reward, 0)), 
-				action_embed(jax.nn.one_hot(x.action, num_actions))	
+				action_embed(jax.nn.one_hot(x.action, num_actions))  
 			))
 			# relu first, then mlp, relu
 			x = jax.nn.relu(x)
@@ -271,6 +270,7 @@ def main(
 		if has_batch_dim: # have batch dimension
 			fn = jax.vmap(fn)
 		return fn(inputs)
+
 
 	muzerotrainer.observation_encoder = lambda inputs, num_actions: tmp_obs_encoder(inputs=inputs,num_actions=num_actions)
 
@@ -338,7 +338,7 @@ def main(
 			lvlepsr = [] # episode reward
 			lvlsolved = [] # whether the puzzle is solved
 			for irepeat in range(nrepeats):
-				print(f"irepeat {irepeat}")
+				# print(f"irepeat {irepeat}")
 				num_words, goal_lex, goal_pos = langutils.sample_episode(
 													difficulty_mode=lvl, 
 													cur_curriculum_level=None, 
@@ -382,7 +382,7 @@ def main(
 							lvlsteps.append(t)
 						else:
 							lvlsolved.append(0)
-					print(f"\tt={t}, action_name: {action_dict[int(action)]}, r={round(float(r),5)}, ends={ends}")
+					# print(f"\tt={t}, action_name: {action_dict[int(action)]}, r={round(float(r),5)}, ends={ends}")
 				if print_end_assbdict>0 and random.random()<print_end_assbdict:
 					assbdict, lastassb = langutils.get_end_assembly_dict(sim, actions)
 					print(f"Goal words {goal_lex}\nGoal pos {goal_pos}")
@@ -413,13 +413,12 @@ def main(
 				for t, a in enumerate(expert_demo):
 					state, r, terminated, truncated, _ = sim.step(a)
 					epsr += r # episode cumulative reward
-					print(f"\tt={t}, action_name: {action_dict[int(a)]}, r={round(float(r),5)}")
 				lvlepsr.append(epsr)
 				lvlsolved.append(1)
 				lvlsteps.append(len(expert_demo))
 			print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
-							\n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})\
-							\n\tavg steps {round(np.mean(lvlsteps), 6)} (sem={round(sem(lvlsteps), 6)})")
+					\n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})\
+					\n\tavg steps {round(np.mean(lvlsteps), 6)} (sem={round(sem(lvlsteps), 6)})")
 			heuristicsolved.append(round(np.mean(lvlsolved),6))
 			heuristicsolvedsem.append(round(sem(lvlsolved),6))
 			heuristicreward.append(round(np.mean(lvlepsr),6))
@@ -452,8 +451,8 @@ def main(
 			if len(lvlsteps)==0:
 				lvlsteps=[np.nan]
 			print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
-							\n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})\
-							\n\tavg steps {round(np.mean(lvlsteps), 6)} (sem={round(sem(lvlsteps), 6)})")
+					\n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})\
+					\n\tavg steps {round(np.mean(lvlsteps), 6)} (sem={round(sem(lvlsteps), 6)})")
 			randomsolved.append(round(np.mean(lvlsolved),6))
 			randomsolvedsem.append(round(sem(lvlsolved),6))
 			randomreward.append(round(np.mean(lvlepsr),6))
@@ -466,7 +465,11 @@ def main(
 		\nheuristicsolved={heuristicsolved}\nheuristicsolvedsem={heuristicsolvedsem}\
 		\nheuristicsteps={heuristicsteps}\nheuristicstepssem={heuristicstepssem}\
 		\nrandomsolved={randomsolved}\nrandomsolvedsem={randomsolvedsem}\
-		\nrandomsteps={randomsteps}\nrandomstepssem={randomstepssem}")
+		\nrandomsteps={randomsteps}\nrandomstepssem={randomstepssem}\
+		\n\n\
+		\nmodelreward={modelreward}\nmodelrewardsem={modelrewardsem}\
+		\nheuristicreward={heuristicreward}\nheuristicrewardsem={heuristicrewardsem}\
+		\nrandomreward={randomreward}\nrandomrewardsem={randomrewardsem}")
 
 '''
 salloc -p gpu_test -t 0-03:00 --mem=80000 --gres=gpu:1
@@ -482,42 +485,17 @@ python configs/language/eval_muzero.py
 if __name__ == "__main__":
 	random.seed(0)
 	main(
-		eval_lvls=True, lvls=[2], # whether to eval on varying complexity (num words)
-		print_end_assbdict=0.1, # whether to sample and print assembly dict at the end of an episode
+		eval_lvls=True, lvls=[2,3,4,5], # whether to eval on varying complexity (num words)
+		print_end_assbdict=0, # prob to sample and print assembly dict for an episode
 		nrepeats=50, # num samples for all analyses except eval_steps
-		groupname='Mgru2+comp-5v.7nospace', # model to load
-		spacing=False,
+		groupname='MTgru-uniform-compyesspace-sumgru', # model to load
+		spacing=True,
 		compositional=True, # whether the training setting is compositional
 		compositional_eval=False, # whether to eval on comp holdout
-		compositional_holdout=[
-[-1,'adj','noun', 'intransverb', -1,-1,-1, -1,-1,-1, 'adv'],
-						
-['det',-1,'noun', 'transverb', -1,'adj','noun', -1,-1,-1,-1], 
-[-1,-1,'noun', 'transverb', 'det',-1,'noun', -1,-1,-1,'adv'],
-[-1,'adj','noun', 'intransverb', -1,-1,-1, 'prep',-1,'noun', -1],
-
-['det',-1,'noun', 'transverb', 'det',-1,'noun', -1,-1,-1,'adv'],
-[-1,'adj','noun', 'transverb', -1,'adj','noun', -1,-1,-1,'adv'],
-[-1,-1,'noun', 'transverb', -1,'adj','noun', 'prep',-1,'noun',-1],
-[-1,'adj','noun', 'intransverb', -1,-1,-1, 'prep',-1,'noun', 'adv'],
-
-['det','adj','noun', 'transverb', -1,'adj','noun', -1,-1,-1,'adv'],
-['det',-1,'noun', 'transverb', -1,'adj','noun', 'prep',-1,'noun',-1],
-[-1,'adj','noun', 'transverb', -1,-1,'noun', 'prep','det','noun',-1],
-[-1,-1,'noun', 'transverb', 'det',-1,'noun', 'prep',-1,'noun','adv'],
-['det','adj','noun', 'intransverb', -1,-1,-1, 'prep',-1,'noun', 'adv'],
-
-['det','adj','noun', 'transverb', -1,-1,'noun', 'prep','det','noun',-1],
-['det',-1,'noun', 'transverb', -1,'adj','noun', 'prep','det','noun',-1],
-[-1,'adj','noun', 'transverb', 'det',-1,'noun', 'prep',-1,'noun','adv'],
-[-1,'adj','noun', 'transverb', -1,-1,'noun', 'prep','det','noun','adv'],
-[-1,-1,'noun', 'transverb', 'det','adj','noun', 'prep','det','noun',-1],
-[-1,-1,'noun', 'transverb', -1,'adj','noun', 'prep','det','noun','adv'],
-
+		compositional_holdout=
+[
+['det','noun', 'intransverb', -1,-1,],
+[-1,'noun', 'transverb', 'det','noun', ],
 ],
+
 			)
-
-'''
-
-aa
-'''
