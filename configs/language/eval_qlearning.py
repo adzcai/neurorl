@@ -24,11 +24,10 @@ from acme import wrappers as acme_wrappers
 import dm_env
 from envs.language import langenv
 
-import configs.language.train_muzero as muzerotrainer 
+import configs.language.train_qlearning as qltrainer
 import envs.language.cfg as langcfg
-from td_agents import muzero
+from td_agents import q_learning
 import functools
-import mctx
 import library.utils as utils
 import envs.language.utils as langutils
 
@@ -131,7 +130,6 @@ def reload(checkpointer, seed_path, use_latest: bool = True):
 	latest = ckpts[-1].split(".index")[0]
 	ckpt_path = latest
 	assert os.path.exists(f'{ckpt_path}.index')
-	# print('loading', ckpt_path)
 	status = checkpointer._checkpoint.restore(ckpt_path)
 
 def load_settings(
@@ -146,7 +144,6 @@ def load_settings(
 	final_agent_config = config
 	final_env_config = {}
 	return seed_path, final_env_config, final_agent_config
-
 
 def make_test_environment(
 						evaluation, 
@@ -178,7 +175,6 @@ def make_test_environment(
 	]
 	return acme_wrappers.wrap_all(env, wrapper_list), sim
 
-
 def main(
 		eval_lvls, 
 		lvls, 
@@ -190,12 +186,12 @@ def main(
 		nrepeats=100,
 		):
 	'''
-		lvls: list[int]
-			list of puzzle_num_blocks to evaluate, should be within range [2, puzzle_max_blocks]
-		compositional: bool
-			if True, evaluating using compositional holdout
-			if False, evaluating using specified lvl for puzzle_num_blocks
-		compositional_eval: bool
+	lvls: list[int]
+		list of puzzle_num_blocks to evaluate, should be within range [2, puzzle_max_blocks]
+	compositional: bool
+		if True, evaluating using compositional holdout
+		if False, evaluating using specified lvl for puzzle_num_blocks
+	compositional_eval: bool
 	compositional_holdout: list
 		groupname: str
 		searchname: str
@@ -205,7 +201,7 @@ def main(
 	default_log_dir = os.environ['RL_RESULTS_DIR']
 	base_dir = os.path.join(default_log_dir, searchname, groupname,)
 	seed_path, env_kwargs, agent_kwargs = load_settings(base_dir=base_dir, run='.')
-	config = muzero.Config(**agent_kwargs)
+	config = q_learning.Config(**agent_kwargs)
 
 	def tmp_obs_encoder(
 		inputs: acme_wrappers.observation_action_reward.OAR,
@@ -271,32 +267,30 @@ def main(
 			fn = jax.vmap(fn)
 		return fn(inputs)
 
-
-	muzerotrainer.observation_encoder = lambda inputs, num_actions: tmp_obs_encoder(inputs=inputs,num_actions=num_actions)
-
+	qltrainer.observation_encoder = lambda inputs, num_actions: tmp_obs_encoder(inputs=inputs,num_actions=num_actions)
 
 	if eval_lvls and len(lvls)>0:
-		modelsolved = [] # ratio of puzzles solved
-		modelsolvedsem = [] 
+		qlsolved = [] # ratio of puzzles solved
+		qlsolvedsem = [] 
 		heuristicsolved = []
 		heuristicsolvedsem = []
 		randomsolved = []
 		randomsolvedsem = []
-		modelreward = [] # avg episode reward
-		modelrewardsem = []
+		qlreward = [] # avg episode reward
+		qlrewardsem = []
 		heuristicreward = []
 		heuristicrewardsem = []
 		randomreward = []
 		randomrewardsem = []
-		modelsteps = [] # num of steps for solving a puzzle 
-		modelstepssem = []
+		qlsteps = [] # num of steps for solving a puzzle 
+		qlstepssem = []
 		heuristicsteps = [] # num of steps for solving a puzzle
 		heuristicstepssem = []
 		randomsteps = [] # num of steps for solving a puzzle
 		randomstepssem = []
 		for lvl in lvls:
 			print(f"\n----------------------- Evaluating lvl {lvl}")
-			print(f"Muzero {groupname}")
+			print(f"Qlearning {groupname}")
 			lvlsteps = [] # num steps for successful puzzles
 			lvlepsr = [] # episode reward
 			lvlsolved = [] # whether the puzzle is solved
@@ -320,35 +314,34 @@ def main(
 											compositional_holdout=None,
 											test_sentence=[goal_lex, goal_pos],
 											)
-				action_dict = langcfg.configurations['action_dict']
-				mcts_policy = functools.partial(mctx.gumbel_muzero_policy,max_depth=config.max_sim_depth,num_simulations=config.num_simulations,gumbel_scale=config.gumbel_scale)
-				discretizer = utils.Discretizer(num_bins=config.num_bins,max_value=config.max_scalar_value,tx_pair=config.tx_pair,)
 				builder = basics.Builder(
 					config=config,
-					get_actor_core_fn=functools.partial(muzero.get_actor_core,evaluation=True,mcts_policy=mcts_policy,discretizer=discretizer,),
-					ActorCls=functools.partial(basics.BasicActor, observers=[muzerotrainer.MuObserver(period=100000)],),
-					optimizer_cnstr=muzero.muzero_optimizer_constr,
-					LossFn=muzero.MuZeroLossFn(
-							discount=config.discount,
-							importance_sampling_exponent=config.importance_sampling_exponent,
-							burn_in_length=config.burn_in_length,
-							max_replay_size=config.max_replay_size,
-							max_priority_weight=config.max_priority_weight,
-							bootstrap_n=config.bootstrap_n,
-							discretizer=discretizer,
-							mcts_policy=mcts_policy,
-							simulation_steps=config.simulation_steps,
-							reanalyze_ratio=0.25, 
-							root_policy_coef=config.root_policy_coef,
-							root_value_coef=config.root_value_coef,
-							model_policy_coef=config.model_policy_coef,
-							model_value_coef=config.model_value_coef,
-							model_reward_coef=config.model_reward_coef,
-					))
-				network_factory = functools.partial(muzerotrainer.make_muzero_networks, config=config)
-				load_outputs = load_agent(env=env, config=config, builder=builder, network_factory=network_factory, seed_path=seed_path, use_latest=True, evaluation=True)
-				reload(load_outputs.checkpointer, seed_path) # can use this to load in latest checkpoints
-
+					ActorCls=functools.partial(
+						basics.BasicActor,
+						observers=[qltrainer.QObserver(period=1000000)],
+						),
+				get_actor_core_fn=functools.partial(
+					basics.get_actor_core,
+					evaluation=True,
+				),
+				LossFn=q_learning.R2D2LossFn(
+					discount=config.discount,
+					importance_sampling_exponent=config.importance_sampling_exponent,
+					burn_in_length=config.burn_in_length,
+					max_replay_size=config.max_replay_size,
+					max_priority_weight=config.max_priority_weight,
+					bootstrap_n=config.bootstrap_n,
+				))
+				network_factory = functools.partial(qltrainer.make_qlearning_networks, config=config)
+				load_outputs = load_agent(
+									env=env,
+									config=config,
+									builder=builder,
+									network_factory=network_factory,
+									seed_path=seed_path,
+									use_latest=True,
+									evaluation=True)
+				reload(load_outputs.checkpointer, seed_path)
 				actor = load_outputs.actor
 				timestep = env.reset()
 				actor.observe_first(timestep)
@@ -384,12 +377,12 @@ def main(
 			print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
 							\n\tavg epsr: {round(np.mean(lvlepsr),6)} (sem={round(sem(lvlepsr),6)})\
 							\n\tavg steps {round(np.mean(lvlsteps), 6)} (sem={round(sem(lvlsteps), 6)})")
-			modelsolved.append(round(np.mean(lvlsolved),6))
-			modelsolvedsem.append(round(sem(lvlsolved),6))
-			modelreward.append(round(np.mean(lvlepsr),6))
-			modelrewardsem.append(round(sem(lvlepsr),6))
-			modelsteps.append(round(np.nanmean(lvlsteps), 6))
-			modelstepssem.append(round(sem(lvlsteps, nan_policy="omit"), 6))
+			qlsolved.append(round(np.mean(lvlsolved),6))
+			qlsolvedsem.append(round(sem(lvlsolved),6))
+			qlreward.append(round(np.mean(lvlepsr),6))
+			qlrewardsem.append(round(sem(lvlepsr),6))
+			qlsteps.append(round(np.nanmean(lvlsteps), 6))
+			qlstepssem.append(round(sem(lvlsteps, nan_policy="omit"), 6))
 
 			print(f"Heuristic")
 			lvlsolved = []
@@ -450,14 +443,14 @@ def main(
 			randomsteps.append(round(np.nanmean(lvlsteps), 6))
 			randomstepssem.append(round(sem(lvlsteps, nan_policy="omit"), 6))
 		
-		print(f"modelsolved={modelsolved}\nmodelsolvedsem={modelsolvedsem}\
-		\nmodelsteps={modelsteps}\nmodelstepssem={modelstepssem}\
+		print(f"qlsolved={qlsolved}\nqlsolvedsem={qlsolvedsem}\
+		\nqlsteps={qlsteps}\nqlstepssem={qlstepssem}\
 		\nheuristicsolved={heuristicsolved}\nheuristicsolvedsem={heuristicsolvedsem}\
 		\nheuristicsteps={heuristicsteps}\nheuristicstepssem={heuristicstepssem}\
 		\nrandomsolved={randomsolved}\nrandomsolvedsem={randomsolvedsem}\
 		\nrandomsteps={randomsteps}\nrandomstepssem={randomstepssem}\
 		\n\n\
-		\nmodelreward={modelreward}\nmodelrewardsem={modelrewardsem}\
+		\nqlreward={qlreward}\nqlrewardsem={qlrewardsem}\
 		\nheuristicreward={heuristicreward}\nheuristicrewardsem={heuristicrewardsem}\
 		\nrandomreward={randomreward}\nrandomrewardsem={randomrewardsem}")
 
@@ -469,17 +462,17 @@ salloc -p test -t 0-01:00 --mem=200000
 module load python/3.10.12-fasrc01
 mamba activate neurorl
 
-python configs/language/eval_muzero.py 
+python configs/language/eval_qlearning.py 
 '''
 
 if __name__ == "__main__":
 	random.seed(0)
 	main(
-		eval_lvls=True, lvls=[2,3], # whether to eval on varying complexity (num words)
+		eval_lvls=True, lvls=[2,3,4,5], # whether to eval on varying complexity (num words)
 		print_end_assbdict=0, # prob to sample and print assembly dict for an episode
-		nrepeats=50, # num samples for all analyses except eval_steps
-		groupname='M-3only-compnospace-sumgru', # model to load
-		spacing=False,
+		nrepeats=100, # num samples for all analyses except eval_steps
+		groupname='Q-uniform-compyesspace-sumgru', # model to load
+		spacing=True,
 		compositional=True, # whether the training setting is compositional
 		compositional_eval=False, # whether to eval on comp holdout
 		compositional_holdout=

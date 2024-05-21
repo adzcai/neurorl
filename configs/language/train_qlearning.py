@@ -63,11 +63,11 @@ import library.networks as networks
 from envs.language import langenv
 from envs.language.cfg import configurations 
 
-obsfreq = 2000 # frequency to call observer
-plotfreq = 2000 # frequency to plot action trajectory
+obsfreq = 10000 # frequency to call observer
+plotfreq = 10000 # frequency to plot action trajectory
 UP_PRESSURE_THRESHOLD = 5 # pressure threshold to increase curriculum
 DOWN_PRESSURE_THRESHOLD = 10 # pressure threshold to decrease curriculum
-UP_REWARD_THRESHOLD = 0.7 # upper reward threshold for incrementing up pressure
+UP_REWARD_THRESHOLD = 5 #0.7 # upper reward threshold for incrementing up pressure
 DOWN_REWARD_THRESHOLD = -5 #0.5 # lower reward threshold for incrementing down pressure
 up_pressure = 0 # initial up pressure
 down_pressure = 0 # initial down pressure
@@ -680,12 +680,12 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['Q-uniform-compyesspace-sumgru']),
+            "group": tune.grid_search(['Q-5only-compnospace-sumgru']),
             "num_steps": tune.grid_search([500e6]),
 
             "samples_per_insert": tune.grid_search([20.0]),
             "batch_size": tune.grid_search([256]),
-            "trace_length": tune.grid_search([10,20]),
+            "trace_length": tune.grid_search([20]),
             "learning_rate": tune.grid_search([1e-3]),
             "agent": tune.grid_search(['qlearning']),
             "state_dim": tune.grid_search([1024]),

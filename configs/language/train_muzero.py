@@ -756,7 +756,7 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['M-2only-compnospace-sumgru']),
+            "group": tune.grid_search(['M-5only-compnospace-sumgru']),
             "num_steps": tune.grid_search([500e6]),
 
             "samples_per_insert": tune.grid_search([20.0]),
