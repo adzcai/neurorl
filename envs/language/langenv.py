@@ -37,6 +37,7 @@ class Simulator():
 				area_status = configurations['area_status'],
 				max_complexity = configurations['max_complexity'],
 				spacing = configurations['spacing'],
+				sparse_reward=configurations['sparse_reward'],
 				evaluation = False,
 				eval_sentence_complexity = None,
 				test_sentence = None,
@@ -51,6 +52,7 @@ class Simulator():
 		self.action_cost = action_cost
 		self.empty_unit = empty_unit
 		self.episode_max_reward = episode_max_reward
+		self.sparse_reward = sparse_reward
 		self.verbose = verbose
 		self.area_status = area_status # area attributes to encode in state, default ['last_activated', 'num_lex_assemblies', 'num_total_assemblies']
 		self.max_complexity = max_complexity
@@ -103,6 +105,7 @@ class Simulator():
 		self.current_time = 0 # current step in the episode
 		self.num_assemblies = self.max_lexicon
 		info = None
+		self.lex_position = -1 # position of the goal lex currently being activated
 		return self.state.copy(), info
 
 	def close(self):
@@ -111,7 +114,7 @@ class Simulator():
 		Return nothing.
 		'''
 		del self.num_words, self.goal, self.input_roles
-		del self.unit_reward
+		del self.unit_reward, self.sparse_reward
 		del self.state
 		del self.action_to_statechange, self.area_to_stateidx, self.stateidx_to_fibername, self.assembly_dict, self.last_active_assembly
 		del self.correct_record
@@ -178,26 +181,36 @@ class Simulator():
 																							goal=self.goal, 
 																							correct_record=self.correct_record, 
 																							empty_unit=self.empty_unit)
-				reward += self.unit_reward * units
+				reward += self.unit_reward * units if (not self.sparse_reward) else 0
 				# update current stack in state
 				for ib, sidx in enumerate(area_to_stateidx["readout"]):
 					self.state[sidx] = readout[ib] if readout[ib] != None else -1
 			self.just_projected = True
 		elif action_name == "activate_lex":
-			lexid = int(self.state[state_change_tuple[0]]) # currently activated lexicon id
-			newlexid = int(lexid) + state_change_tuple[1] # the new block id to be activated (prev -1 or next +1)
-			if newlexid < 0 or newlexid >= self.max_lexicon:
-				reward -= self.action_cost  # BAD, new block id is out of range
-			else: # GOOD, valid activate
-				self.state[state_change_tuple[0]] = newlexid # update block id in state vec
-				self.last_active_assembly[self.lexicon_area] = newlexid # update the last active assembly
+			if 0 <= self.lex_position+state_change_tuple[1] < len(self.goal):	
+				self.lex_position += state_change_tuple[1] 
+				newlexid = self.goal[self.lex_position]
+				self.state[state_change_tuple[0]] = newlexid
+				self.last_active_assembly[self.lexicon_area] = newlexid
+			else:
+				reward -= self.action_cost
 			self.just_projected = False
+			# lexid = int(self.state[state_change_tuple[0]]) # currently activated lexicon id
+			# newlexid = int(lexid) + state_change_tuple[1] # the new block id to be activated (prev -1 or next +1)
+			# if newlexid < 0 or newlexid >= self.max_lexicon:
+			# 	reward -= self.action_cost  # BAD, new block id is out of range
+			# else: # GOOD, valid activate
+			# 	self.state[state_change_tuple[0]] = newlexid # update block id in state vec
+			# 	self.last_active_assembly[self.lexicon_area] = newlexid # update the last active assembly
+			# self.just_projected = False
 		else:
 			raise ValueError(f"\tError: action_idx {action_idx} is not recognized!")
 		self.current_time += 1 # increment step in the episode 
 		if self.current_time >= self.max_steps:
 			truncated = True
-		terminated = self.all_correct # and utils.all_fiber_area_closed(self)
+		terminated = self.all_correct 
+		if self.sparse_reward and terminated:
+			reward = self.episode_max_reward - self.action_cost
 		return self.state.copy(), reward, terminated, truncated, info
 
 	def create_state_representation(self):
@@ -557,7 +570,7 @@ if __name__ == "__main__":
 
 	random.seed(0)
 
-	test_simulator(expert=False, repeat=500, verbose=False)
+	# test_simulator(expert=False, repeat=500, verbose=False)
 	test_simulator(expert=True, repeat=500, verbose=False)
 	
 	absltest.main()	

@@ -391,8 +391,10 @@ def main(
           ends = False
           t = 0
           epsr = 0
+          mental_actions = []
           while not ends:
             action = actor.select_action(timestep.observation)
+            mental_actions.append(int(action))
             timestep = env.step(action)
             steptype = timestep.step_type
             r = timestep.reward
@@ -408,6 +410,7 @@ def main(
                 lvlsolved.append(0)
             # print(f"\tt={t}, action_name: {action_dict[int(action)]}, r={round(float(r),5)}, ends={ends}")
           lvlepsr.append(epsr)
+          bwutils.translate_actions(mental_actions, env.action_dict, env.input_stacks, env.goal_stacks, env.stack_max_blocks, env.puzzle_max_stacks, env.puzzle_max_blocks)
         if len(lvlsteps)==0:
           lvlsteps=[np.nan]
         print(f"\tavg solved: {round(np.mean(lvlsolved),6)} (sem={round(sem(lvlsolved),6)})\
@@ -1432,7 +1435,7 @@ if __name__ == "__main__":
         eval_test_puzzles=False, # whether to eval on 100 jBrain puzzles
         eval_num_stacks=False, fixed_num_blocks=4, # whether to eval on varying num stacks while fixing num blocks
         eval_steps=False, max_oracle_steps=40, nsamples=1000, # whether to eval on solution lengths
-        nrepeats=200, # num samples for all analyses except eval_steps
+        nrepeats=5, # num samples for all analyses except eval_steps
         groupname='Muzsparse5onlycomp2perc25max5-10-7', # model to load
       )
 

@@ -971,6 +971,67 @@ def _intersection(cur, goal):
 			return ntoremove, ntoadd, nmatch
 	return 0, 0, len(cur)
 
+def remove_value2d(array2d, value):
+	return [[elem for elem in sublist if elem != value] for sublist in array2d]
+def remove_value1d(array1d, value):
+	return [elem for elem in array1d if elem != value]
+
+def translate_actions(action_idxs, action_dict, initial, goal, stack_max_blocks, puzzle_max_stacks, puzzle_max_blocks):
+	# translate a sequence of mental actions to physical actions
+	print("\nTranslating mental actions to physical actions")
+	current_config = initial_config = remove_value2d(initial, -1)
+	goal_config = remove_value2d(goal, -1)
+	table = [-1] * puzzle_max_blocks
+	stack_pointer = 0
+	table_pointer = 0
+	for aid in action_idxs:
+		action = action_dict[aid]
+		if action == "parse_input":
+			print(f"Initial config: {initial_config}")
+		elif action == "parse_goal":
+			print(f"Goal config: {goal_config}")
+		elif action == "next_stack":
+			if stack_pointer<puzzle_max_stacks-1:
+				stack_pointer += 1
+		elif action == "previous_stack":
+			if stack_pointer>0:
+				stack_pointer -= 1
+		elif action == "next_table":
+			if table_pointer<puzzle_max_blocks-1:
+				table_pointer += 1
+		elif action == "previous_table":
+			if table_pointer>0:
+				table_pointer -= 1
+		elif action == "remove":
+			if stack_pointer<len(current_config) and len(current_config[stack_pointer])>=1:
+				block = current_config[stack_pointer].pop(0)
+				empty_idx = table.index(-1)
+				table[empty_idx] = block
+				print(f"Remove block {block} from top of stack {stack_pointer} and put on table\
+						\n\tCurrent config: {current_config}\n\tTable: {remove_value1d(table, -1)}")
+			# elif stack_pointer>=len(current_config):
+			# 	print(f"(Failed attempt of Remove: stack {stack_pointer} does not exist)")
+			# elif len(current_config[stack_pointer])<1:
+			# 	print(f"(Failed attempt of Remove: no block in stack {stack_pointer})")
+			# else:
+			# 	print(f"(Failed attempt of Remove: unknwon reason")
+		elif action == "add":
+			if table[table_pointer]!=-1 and len(current_config[stack_pointer])<stack_max_blocks:
+				block = table[table_pointer]
+				table[table_pointer] = -1
+				current_config[stack_pointer].insert(0, block)
+				print(f"Add block {block} from table to top of stack {stack_pointer}\
+						\n\tCurrent config: {current_config}\n\tTable: {remove_value1d(table, -1)}")
+			# elif table[table_pointer]==-1:
+			# 	print(f"(Failed attempt of Add: no block chosen on table)")
+			# elif len(current_config[stack_pointer])==stack_max_blocks:
+			# 	print(f"(Failed attempt of Add: current stack {stack_pointer} is full)")
+			# else:
+			# 	print(f"(Failed attempt of Add: unknown reason)")
+		else:
+			print(f"Error! Unrecognized action {action}")
+	print(f"Episode ends, number of mental steps {len(action_idxs)}\n")
+
 
 def oracle_demo_plan(simulator):
 	'''

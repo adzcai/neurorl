@@ -28,7 +28,7 @@ python configs/language/train_muzero.py \
   --use_wandb=False 
 '''
 import functools 
-from typing import Dict
+from typing import Dict, Tuple
 
 import dataclasses
 from absl import flags # absl for app configurations (distributed commandline flags, custom logging modules)
@@ -95,6 +95,7 @@ FLAGS = flags.FLAGS
 State = jax.Array
 
 
+
 def observation_encoder(
     inputs: acme_wrappers.observation_action_reward.OAR,
     num_actions: int,
@@ -124,45 +125,32 @@ def observation_encoder(
     The output of the neural network, ie. the encoded representation.
   """
   # embeddings for different elements in state repr
-  curlex_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+  curlex_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
   cut1 = max_sentence_length # state idx as cutting point
-  goallex_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+  goallex_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
   cut2 = cut1+max_sentence_length
-  goalpos_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+  goalpos_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
   cut3 = cut2+max_sentence_length
-  fiber_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+  fiber_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
   cut4 = cut3+num_fibers
   area_embed1 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
   cut5 = cut4+num_areas
-  area_embed2 = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+  area_embed2 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
   cut6 = cut5+num_areas
-  area_embed3 = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+  area_embed3 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
   cut7 = cut6+num_areas
-  area_embed4 = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+  area_embed4 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
   # embeddings for prev reward and action
   reward_embed = hk.Linear(128, w_init=hk.initializers.RandomNormal())
-  action_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
-  # GRU for goallex and goalpos
-  gru = hk.GRU(512)
+  action_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
   # backbone of the encoder
   mlp = hk.nets.MLP([512,512,512,512], activate_final=True) # default RELU activations between layers (and after final layer)
-  def fn(x, dropout_rate=None):
-    # process gru
-    gru_input = jnp.concatenate((
-                        goallex_embed(jax.nn.one_hot(x.observation[cut1:cut2], num_words)),
-                        goalpos_embed(jax.nn.one_hot(x.observation[cut2:cut3], num_pos)),
-                        ), axis=1)
-    state = gru.initial_state(None)
-    output_sequence, final_state = hk.static_unroll(core=gru, input_sequence=gru_input, initial_state=state, time_major=True)
-    goal_repr = jnp.sum(output_sequence, axis=0) # sum along time dimension
-    # goal_repr = output_sequence[-1, :] # use the last timestep
-    print(f"gru_input shape {gru_input.shape} \noutput_sequence shape {output_sequence.shape} \ngoal_repr shape {goal_repr.shape}")
+  def fn(x):
     # concatenate embeddings and previous reward and action
     x = jnp.concatenate((
         curlex_embed(jax.nn.one_hot(x.observation[:cut1], num_words).reshape(-1)),
-        # goallex_embed(jax.nn.one_hot(x.observation[cut1:cut2], num_words).reshape(-1)),
-        # goalpos_embed(jax.nn.one_hot(x.observation[cut2:cut3], num_pos).reshape(-1)),
-        goal_repr,
+        goallex_embed(jax.nn.one_hot(x.observation[cut1:cut2], num_words).reshape(-1)),
+        goalpos_embed(jax.nn.one_hot(x.observation[cut2:cut3], num_pos).reshape(-1)),
         fiber_embed(jax.nn.one_hot(x.observation[cut3:cut4], 2).reshape(-1)),
         area_embed1(jax.nn.one_hot(x.observation[cut4:cut5], 2).reshape(-1)),
         area_embed2(jax.nn.one_hot(x.observation[cut5:cut6], max_assemblies).reshape(-1)),
@@ -173,7 +161,7 @@ def observation_encoder(
       ))
     # relu first, then mlp, relu
     x = jax.nn.relu(x)
-    x = mlp(x, dropout_rate=dropout_rate)
+    x = mlp(x)
     return x
   # If there's a batch dim, applies vmap first.
   has_batch_dim = inputs.reward.ndim > 0
@@ -210,7 +198,8 @@ def make_muzero_networks(
     transition_fn = hk.to_module(transition_fn)('transition_fn')
     # Setup prediction functions: policy, value, reward
     root_value_fn = hk.nets.MLP(
-        (128, 32, config.num_bins), name='pred_root_value')
+        # (128, 32, config.num_bins), name='pred_root_value')
+        (512, 128, config.num_bins), name='pred_root_value')
     root_policy_fn = hk.nets.MLP(
         (128, 32, num_actions), name='pred_root_policy')
     model_reward_fn = hk.nets.MLP(
@@ -218,7 +207,8 @@ def make_muzero_networks(
 
     if config.seperate_model_nets: # what is typically done
       model_value_fn = hk.nets.MLP(
-          (128, 32, config.num_bins), name='pred_model_value')
+          # (128, 32, config.num_bins), name='pred_model_value')
+          (512, 128, config.num_bins), name='pred_model_value')
       model_policy_fn = hk.nets.MLP(
           (128, 32, num_actions), name='pred_model_policy')
     else:
@@ -263,6 +253,8 @@ def make_muzero_networks(
     make_core_module=make_core_module,
     **kwargs)
   
+
+
 
 class MuObserver(basics.ActorObserver):
   """
@@ -756,17 +748,17 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['M-5only-compnospace-sumgru']),
+            "group": tune.grid_search(['M3-sparse-compnospace-vf-act']),
             "num_steps": tune.grid_search([500e6]),
 
             "samples_per_insert": tune.grid_search([20.0]),
             "batch_size": tune.grid_search([256]),
-            "trace_length": tune.grid_search([10]),
-            "learning_rate": tune.grid_search([1e-3]),
+            "trace_length": tune.grid_search([10, 20]),
+            "learning_rate": tune.grid_search([1e-3, 1e-4]),
 
             "agent": tune.grid_search(['muzero']),
             "num_bins": tune.grid_search([101]),  # for muzero
-            "num_simulations": tune.grid_search([25]), # for muzero
+            "num_simulations": tune.grid_search([25, 10]), # for muzero
 
             "state_dim": tune.grid_search([1024]),
         }

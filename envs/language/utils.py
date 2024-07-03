@@ -392,7 +392,7 @@ def calculate_readout_reward(readout, goal, correct_record, empty_unit):
 			if correct_record[iword]==0: # reward new correct word in this episode
 				if goal[iword]==-1: # empty position gets smaller reward
 					units += empty_unit
-				else: # actual block match gets larger reward (with decay)
+				else: # actual match gets larger reward (no decay)
 					units += 1
 				correct_record[iword] = 1 # record history for episode
 	all_correct = (num_correct > 0) and (num_correct == len(goal))
@@ -730,7 +730,8 @@ def expert_demo_language(simulator):
 	for wid, rid in zip(words, roles):
 		if wid==-1:
 			continue
-		final_actions += go_activate(curwid, wid)
+		# final_actions += go_activate(curwid, wid)
+		final_actions += [31]
 		r = list(LEXEME_DICT.keys())[rid]
 		if r=='det':
 			final_actions += parse_det(action_dict)
@@ -738,14 +739,10 @@ def expert_demo_language(simulator):
 			final_actions += parse_noun(action_dict)
 		elif r=='transverb':
 			final_actions += parse_transverb(action_dict)
-		# elif r=='prep':
-		# 	final_actions += parse_prep(action_dict)
 		elif r=='adj':
 			final_actions += parse_adj(action_dict)
 		elif r=='intransverb':
 			final_actions += parse_intransverb(action_dict)
-		# elif r=='adv':
-		# 	final_actions += parse_adverb(action_dict)
 		else:
 			raise ValueError(f"role type {r} is not recognized")
 		curwid = wid
