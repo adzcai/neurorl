@@ -1408,12 +1408,12 @@ python configs/blocksworld/eval_plan_muzero.py
 if __name__ == "__main__":
   random.seed(0)
   main(
-        eval_lvls=True, lvls=[2,3,4,5], # whether to eval on varying num blocks, nblocks also varied
+        eval_lvls=True, lvls=[4,5], # whether to eval on varying num blocks, nblocks also varied
         eval_blocks=False, fixed_num_stacks=2, # whether to eval on varying num blocks while fixing num stacks
         puzzle_max_stacks=5, # model config
         puzzle_max_blocks=10, # model config
         stack_max_blocks=7, # model config
-        sparse_reward=True, # whether the training is sparse reward
+        sparse_reward=False, # whether the training is sparse reward
         compositional=True, # whether the training setting is compositional
         compositional_eval=False, # whether to eval on comp holdout
         # compositional_type='newblock', compositional_holdout=[2,3,5,7], 
@@ -1435,8 +1435,8 @@ if __name__ == "__main__":
         eval_test_puzzles=False, # whether to eval on 100 jBrain puzzles
         eval_num_stacks=False, fixed_num_blocks=4, # whether to eval on varying num stacks while fixing num blocks
         eval_steps=False, max_oracle_steps=40, nsamples=1000, # whether to eval on solution lengths
-        nrepeats=5, # num samples for all analyses except eval_steps
-        groupname='Muzsparse5onlycomp2perc25max5-10-7', # model to load
+        nrepeats=20, # num samples for all analyses except eval_steps
+        groupname='Muz5onlycomp2perc25max5-10-7', # model to load
       )
 
 '''

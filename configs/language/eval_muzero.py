@@ -152,6 +152,7 @@ def make_test_environment(
 						evaluation, 
 						eval_sentence_complexity,
 						spacing,
+						sparse_reward,
 						compositional, 
 						compositional_eval,
 						compositional_holdout,
@@ -159,6 +160,7 @@ def make_test_environment(
 						):
 	sim = langenv.Simulator(
 						spacing=spacing,
+						sparse_reward=sparse_reward,
 						evaluation=evaluation,
 						eval_sentence_complexity=eval_sentence_complexity,
 						compositional=compositional, compositional_eval=compositional_eval,
@@ -166,12 +168,10 @@ def make_test_environment(
 						test_sentence=test_sentence,
 						)
 	sim.reset()
-	# insert info into cfg
 	import envs.language.cfg as langcfg
 	langcfg.configurations['num_actions'] = sim.num_actions
 	langcfg.configurations['action_dict'] = sim.action_dict
 	env = langenv.EnvWrapper(sim)
-	# add acme wrappers
 	wrapper_list = [
 		acme_wrappers.ObservationActionRewardWrapper, # put action + reward in observation
 		acme_wrappers.SinglePrecisionWrapper, # cheaper to do computation in single precision
@@ -184,6 +184,7 @@ def main(
 		lvls, 
 		print_end_assbdict,
 		spacing,
+		sparse_reward,
 		compositional, 
 		compositional_eval, compositional_holdout,
 		groupname, searchname='initial', 
@@ -191,10 +192,10 @@ def main(
 		):
 	'''
 		lvls: list[int]
-			list of puzzle_num_blocks to evaluate, should be within range [2, puzzle_max_blocks]
+			number of words in sentence to evaluate, should be within range [2, max_sentence_length]
 		compositional: bool
 			if True, evaluating using compositional holdout
-			if False, evaluating using specified lvl for puzzle_num_blocks
+			if False, evaluating using specified lvl for number of words
 		compositional_eval: bool
 	compositional_holdout: list
 		groupname: str
@@ -217,42 +218,32 @@ def main(
 		num_pos: int=langcfg.configurations['num_pos'],
 		num_words: int=langcfg.configurations['num_words'],):
 		# embeddings for different elements in state repr
-		curlex_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+		curlex_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
 		cut1 = max_sentence_length # state idx as cutting point
-		goallex_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+		goallex_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
 		cut2 = cut1+max_sentence_length
-		goalpos_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+		goalpos_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
 		cut3 = cut2+max_sentence_length
-		fiber_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+		fiber_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
 		cut4 = cut3+num_fibers
 		area_embed1 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
 		cut5 = cut4+num_areas
-		area_embed2 = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+		area_embed2 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
 		cut6 = cut5+num_areas
-		area_embed3 = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+		area_embed3 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
 		cut7 = cut6+num_areas
-		area_embed4 = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
+		area_embed4 = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
 		# embeddings for prev reward and action
 		reward_embed = hk.Linear(128, w_init=hk.initializers.RandomNormal())
-		action_embed = hk.Linear(256, w_init=hk.initializers.TruncatedNormal())
-		# GRU for goallex and goalpos
-		gru = hk.GRU(512)
+		action_embed = hk.Linear(128, w_init=hk.initializers.TruncatedNormal())
 		# backbone of the encoder
 		mlp = hk.nets.MLP([512,512,512,512], activate_final=True) # default RELU activations between layers (and after final layer)
-		def fn(x, dropout_rate=None):
-			# process gru
-			gru_input = jnp.concatenate((
-								goallex_embed(jax.nn.one_hot(x.observation[cut1:cut2], num_words)),
-								goalpos_embed(jax.nn.one_hot(x.observation[cut2:cut3], num_pos)),
-								), axis=1)
-			state = gru.initial_state(None)
-			output_sequence, final_state = hk.static_unroll(core=gru, input_sequence=gru_input, initial_state=state, time_major=True)
-			goal_repr = jnp.sum(output_sequence, axis=0) # sum along time dimension
-			# goal_repr = output_sequence[-1, :] # use the last timestep
+		def fn(x):
 			# concatenate embeddings and previous reward and action
 			x = jnp.concatenate((
 				curlex_embed(jax.nn.one_hot(x.observation[:cut1], num_words).reshape(-1)),
-				goal_repr,
+				goallex_embed(jax.nn.one_hot(x.observation[cut1:cut2], num_words).reshape(-1)),
+				goalpos_embed(jax.nn.one_hot(x.observation[cut2:cut3], num_pos).reshape(-1)),
 				fiber_embed(jax.nn.one_hot(x.observation[cut3:cut4], 2).reshape(-1)),
 				area_embed1(jax.nn.one_hot(x.observation[cut4:cut5], 2).reshape(-1)),
 				area_embed2(jax.nn.one_hot(x.observation[cut5:cut6], max_assemblies).reshape(-1)),
@@ -263,13 +254,14 @@ def main(
 			))
 			# relu first, then mlp, relu
 			x = jax.nn.relu(x)
-			x = mlp(x, dropout_rate=dropout_rate)
+			x = mlp(x)
 			return x
 		# If there's a batch dim, applies vmap first.
 		has_batch_dim = inputs.reward.ndim > 0
 		if has_batch_dim: # have batch dimension
 			fn = jax.vmap(fn)
 		return fn(inputs)
+
 
 
 	muzerotrainer.observation_encoder = lambda inputs, num_actions: tmp_obs_encoder(inputs=inputs,num_actions=num_actions)
@@ -315,6 +307,7 @@ def main(
 				env, sim = make_test_environment(
 											evaluation=True,
 											spacing=None,
+											sparse_reward=sparse_reward,
 											eval_sentence_complexity=None,
 											compositional=None, compositional_eval=None,
 											compositional_holdout=None,
@@ -338,7 +331,7 @@ def main(
 							discretizer=discretizer,
 							mcts_policy=mcts_policy,
 							simulation_steps=config.simulation_steps,
-							reanalyze_ratio=0.25, 
+							reanalyze_ratio=0.1, 
 							root_policy_coef=config.root_policy_coef,
 							root_value_coef=config.root_value_coef,
 							model_policy_coef=config.model_policy_coef,
@@ -372,7 +365,7 @@ def main(
 							lvlsteps.append(t)
 						else:
 							lvlsolved.append(0)
-					# print(f"\tt={t}, action_name: {action_dict[int(action)]}, r={round(float(r),5)}, ends={ends}")
+					print(f"\tt={t}, action_name: {action_dict[int(action)]}, r={round(float(r),5)}, ends={ends}")
 				if print_end_assbdict>0 and random.random()<print_end_assbdict:
 					assbdict, lastassb = langutils.get_end_assembly_dict(sim, actions)
 					print(f"Goal words {goal_lex}\nGoal pos {goal_pos}")
@@ -475,17 +468,17 @@ python configs/language/eval_muzero.py
 if __name__ == "__main__":
 	random.seed(0)
 	main(
-		eval_lvls=True, lvls=[2,3], # whether to eval on varying complexity (num words)
+		eval_lvls=True, lvls=[2, 3], # whether to eval on varying complexity (num words)
 		print_end_assbdict=0, # prob to sample and print assembly dict for an episode
 		nrepeats=50, # num samples for all analyses except eval_steps
-		groupname='M-3only-compnospace-sumgru', # model to load
+		groupname='M3sparse-compnospace-vf-act', # model to load
 		spacing=False,
+		sparse_reward=True,
 		compositional=True, # whether the training setting is compositional
 		compositional_eval=False, # whether to eval on comp holdout
 		compositional_holdout=
-[
-['det','noun', 'intransverb', -1,-1,],
-[-1,'noun', 'transverb', 'det','noun', ],
-],
-
-			)
+		[
+		['det','noun', 'intransverb', -1,-1,],
+		[-1,'noun', 'transverb', 'det','noun', ],
+		],
+	)

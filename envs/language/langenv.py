@@ -404,6 +404,7 @@ class Simulator():
 def test_simulator(expert=True, repeat=1, verbose=False):
 	import time
 	sim = Simulator(verbose=False)
+	print(sim.action_dict)
 	pprint.pprint(sim.action_dict)
 	start_time = time.time()
 	avg_expert_len = []
@@ -412,6 +413,7 @@ def test_simulator(expert=True, repeat=1, verbose=False):
 		print(f"\n\ncomplexity: {complexity}")
 		for r in range(repeat):
 			state, _ = sim.reset(difficulty_mode=complexity) # specify complexity
+			print(f"nwords {sim.num_words}")
 			print(f'------------ repeat {r}, state after reset\t{state}') if verbose else 0
 			expert_demo = utils.expert_demo_language(sim) if expert else None
 			rtotal = 0 # total reward of episode
@@ -422,6 +424,8 @@ def test_simulator(expert=True, repeat=1, verbose=False):
 				next_state, reward, terminated, truncated, info = sim.step(action_idx)
 				rtotal += reward
 				print(f't={t},\tr={round(reward, 5)},\taction={action_idx}\t{sim.action_dict[action_idx]},\ttruncated={truncated},\tdone={terminated},\tall_correct={sim.all_correct}, correct_record={sim.correct_record}') if verbose else 0
+				if terminated:
+					break
 				# print(f'\tnext state {next_state}\t') if verbose else 0
 			readout = utils.synthetic_readout(sim)
 			print(f'end of episode (complexity={complexity}), num_words={sim.num_words}, \
@@ -571,6 +575,6 @@ if __name__ == "__main__":
 	random.seed(0)
 
 	# test_simulator(expert=False, repeat=500, verbose=False)
-	test_simulator(expert=True, repeat=500, verbose=False)
+	test_simulator(expert=True, repeat=30, verbose=False)
 	
 	absltest.main()	

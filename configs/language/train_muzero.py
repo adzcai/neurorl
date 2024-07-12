@@ -67,7 +67,7 @@ from envs.language import langenv
 from envs.language.cfg import configurations 
 
 obsfreq = 3000 # frequency to call observer
-plotfreq = 3000 # frequency to plot action trajectory
+plotfreq = 6000 # frequency to plot action trajectory
 UP_PRESSURE_THRESHOLD = 5 # pressure threshold to increase curriculum
 DOWN_PRESSURE_THRESHOLD = 10 # pressure threshold to decrease curriculum
 UP_REWARD_THRESHOLD = 5#0.7 # upper reward threshold for incrementing up pressure
@@ -199,18 +199,23 @@ def make_muzero_networks(
     # Setup prediction functions: policy, value, reward
     root_value_fn = hk.nets.MLP(
         # (128, 32, config.num_bins), name='pred_root_value')
-        (512, 128, config.num_bins), name='pred_root_value')
+        # (512, 128, config.num_bins), name='pred_root_value')
+        (512, 256, 128, config.num_bins), name='pred_root_value')
     root_policy_fn = hk.nets.MLP(
         (128, 32, num_actions), name='pred_root_policy')
+        # (512, 128, num_actions), name='pred_root_policy')
     model_reward_fn = hk.nets.MLP(
         (32, 32, config.num_bins), name='pred_model_reward')
+        # (64, 64, config.num_bins), name='pred_model_reward')
 
     if config.seperate_model_nets: # what is typically done
       model_value_fn = hk.nets.MLP(
           # (128, 32, config.num_bins), name='pred_model_value')
-          (512, 128, config.num_bins), name='pred_model_value')
+          # (512, 128, config.num_bins), name='pred_model_value')
+          (512, 256, 128, config.num_bins), name='pred_model_value')
       model_policy_fn = hk.nets.MLP(
           (128, 32, num_actions), name='pred_model_policy')
+          # (512, 128, num_actions), name='pred_model_policy')
     else:
       model_value_fn = root_value_fn
       model_policy_fn = root_policy_fn
@@ -748,17 +753,16 @@ def sweep(search: str = 'default'):
   if search == 'initial':
     space = [
         {
-            "group": tune.grid_search(['M3-sparse-compnospace-vf-act']),
+            "group": tune.grid_search(['M3sparse-compnospace-vf-act']),
             "num_steps": tune.grid_search([500e6]),
 
-            "samples_per_insert": tune.grid_search([20.0]),
-            "batch_size": tune.grid_search([256]),
-            "trace_length": tune.grid_search([10, 20]),
-            "learning_rate": tune.grid_search([1e-3, 1e-4]),
-
             "agent": tune.grid_search(['muzero']),
+            "batch_size": tune.grid_search([256]),
+            "learning_rate": tune.grid_search([1e-2, 1e-3]),
+            "num_simulations": tune.grid_search([25]), # for muzero
+            "trace_length": tune.grid_search([20]),
+            "samples_per_insert": tune.grid_search([20.0]),
             "num_bins": tune.grid_search([101]),  # for muzero
-            "num_simulations": tune.grid_search([25, 10]), # for muzero
 
             "state_dim": tune.grid_search([1024]),
         }
