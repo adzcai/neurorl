@@ -52,7 +52,7 @@ To get started, run
 python configs/catch_trainer.py \
   --parallel='none' \
   --run_distributed=False \
-  --debug=True \
+  --debug=False \
   --use_wandb=False \
   --search='baselines'
 ```
