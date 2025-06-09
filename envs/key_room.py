@@ -1,49 +1,60 @@
 from __future__ import annotations
-from enum import Enum
 
 import copy
-from gymnasium import spaces
-from typing import Optional, Union, List
 import itertools
-import numpy as np
-
-from minigrid.envs.babyai import goto
-from minigrid.envs.babyai.core.levelgen import LevelGen
+from enum import Enum
+from typing import List, Optional, Union
 
 import numpy as np
-
+from gymnasium import spaces
 from minigrid.core.constants import COLOR_NAMES, OBJECT_TO_IDX
 from minigrid.core.grid import Grid
 from minigrid.core.world_object import Ball, Box, Door, Key, WorldObj
+from minigrid.envs.babyai import goto
+from minigrid.envs.babyai.core.levelgen import LevelGen
+from minigrid.envs.babyai.core.roomgrid_level import RejectSampling, RoomGridLevel
+from minigrid.envs.babyai.core.verifier import Instr, ObjDesc, PickupInstr
 from minigrid.minigrid_env import MiniGridEnv
 
-from minigrid.envs.babyai.core.roomgrid_level import RoomGridLevel, RejectSampling
-from minigrid.envs.babyai.core.verifier import PickupInstr, ObjDesc, Instr
 
 class DummyInstr(Instr):
     """
     Dummy Instruction Class.
     """
-    def verify(self, action): del action
-    def reset_verifier(self, env): del env
-    def surface(self, env): return ''
-    def update_objs_poss(self): pass
-    def verify_action(self): pass
+
+    def verify(self, action):
+        del action
+
+    def reset_verifier(self, env):
+        del env
+
+    def surface(self, env):
+        return ""
+
+    def update_objs_poss(self):
+        pass
+
+    def verify_action(self):
+        pass
+
 
 def rotate(array, n=1):
-  """Rotate array by n."""
-  length = len(array)
+    """Rotate array by n."""
+    length = len(array)
 
-  # Rotate the array to the right by one position
-  return[array[length - n]] + array[:length - n]
+    # Rotate the array to the right by one position
+    return [array[length - n]] + array[: length - n]
+
 
 def make_name(color, type):
     return f"{color} {type}"
 
+
 def onehot(index: int, size: int):
-   x = np.zeros(size)
-   x[index] = 1
-   return x
+    x = np.zeros(size)
+    x[index] = 1
+    return x
+
 
 def reject_next_to(env, pos):
     """
@@ -64,132 +75,148 @@ class TaskOptions(Enum):
     boxes = 3
     keys_balls_boxes = 4
 
+
 def update_task_set(obj: WorldObj, task_option: TaskOptions, task_set: List[WorldObj]):
-  """Hacky way to update task set."""
-  if task_option == TaskOptions.balls.value:
-    if obj.type == 'ball': task_set.append(obj)
-  elif task_option == TaskOptions.keys.value:
-    if obj.type == 'key': task_set.append(obj)
-  elif task_option == TaskOptions.boxes.value:
-    if obj.type == 'box': task_set.append(obj)
-  elif task_option == TaskOptions.keys_balls.value:
-    if obj.type == 'key': task_set.append(obj)
-    if obj.type == 'ball': task_set.append(obj)
-  elif task_option == TaskOptions.keys_balls_boxes.value:
-    if obj.type == 'key': task_set.append(obj)
-    if obj.type == 'ball': task_set.append(obj)
-    if obj.type == 'box': task_set.append(obj)
-  else:
-      raise RuntimeError(
-          f"setting not known. Options: {TaskOptions}")
+    """Hacky way to update task set."""
+    if task_option == TaskOptions.balls.value:
+        if obj.type == "ball":
+            task_set.append(obj)
+    elif task_option == TaskOptions.keys.value:
+        if obj.type == "key":
+            task_set.append(obj)
+    elif task_option == TaskOptions.boxes.value:
+        if obj.type == "box":
+            task_set.append(obj)
+    elif task_option == TaskOptions.keys_balls.value:
+        if obj.type == "key":
+            task_set.append(obj)
+        if obj.type == "ball":
+            task_set.append(obj)
+    elif task_option == TaskOptions.keys_balls_boxes.value:
+        if obj.type == "key":
+            task_set.append(obj)
+        if obj.type == "ball":
+            task_set.append(obj)
+        if obj.type == "box":
+            task_set.append(obj)
+    else:
+        raise RuntimeError(f"setting not known. Options: {TaskOptions}")
+
 
 class KeyRoom(LevelGen):
-    """
+    """ """
 
-    """
+    def __init__(
+        self,
+        room_size=7,
+        num_rows=3,
+        num_cols=3,
+        num_dists=10,
+        respawn: bool = True,
+        locations=False,
+        unblocking=False,
+        max_steps_per_room: int = 100,
+        implicit_unlock=False,
+        train_task_option: TaskOptions = 1,
+        transfer_task_option: TaskOptions = 3,
+        training: bool = True,
+        fixed_door_locs: bool = True,
+        **kwargs,
+    ):
+        """Keyroom.
 
-    def __init__(self,
-      room_size=7,
-      num_rows=3,
-      num_cols=3,
-      num_dists=10,
-      respawn: bool = True,
-      locations=False,
-      unblocking=False,
-      max_steps_per_room: int = 100,
-      implicit_unlock=False,
-      train_task_option: TaskOptions = 1,
-      transfer_task_option: TaskOptions = 3,
-      training: bool = True,
-      fixed_door_locs:bool=True,
-      **kwargs):
-      """Keyroom.
+        Args:
+            room_size (int, optional): _description_. Defaults to 7.
+            num_rows (int, optional): _description_. Defaults to 3.
+            num_cols (int, optional): _description_. Defaults to 3.
+            num_dists (int, optional): _description_. Defaults to 10.
+            locations (bool, optional): _description_. Defaults to False.
+            unblocking (bool, optional): _description_. Defaults to False.
+            implicit_unlock (bool, optional): _description_. Defaults to False.
+            fixed_door_locs (bool, optional): _description_. Defaults to True.
+        """
+        self.respawn = respawn
+        self._fixed_door_locs = fixed_door_locs
+        self._training = training
+        self._train_task_option = train_task_option
+        self._transfer_task_option = transfer_task_option
+        self._train_objects = []
+        self._transfer_objects = []
+        self._train_task_vectors = None  # dummy
 
-      Args:
-          room_size (int, optional): _description_. Defaults to 7.
-          num_rows (int, optional): _description_. Defaults to 3.
-          num_cols (int, optional): _description_. Defaults to 3.
-          num_dists (int, optional): _description_. Defaults to 10.
-          locations (bool, optional): _description_. Defaults to False.
-          unblocking (bool, optional): _description_. Defaults to False.
-          implicit_unlock (bool, optional): _description_. Defaults to False.
-          fixed_door_locs (bool, optional): _description_. Defaults to True.
-      """
-      self.respawn = respawn
-      self._fixed_door_locs = fixed_door_locs
-      self._training = training
-      self._train_task_option = train_task_option
-      self._transfer_task_option = transfer_task_option
-      self._train_objects = []
-      self._transfer_objects = []
-      self._train_task_vectors = None # dummy
+        # object_types = OBJECT_TO_IDX.keys()
+        object_types = ["key", "ball", "box"]
+        color_types = itertools.product(COLOR_NAMES, object_types)
+        self.name_2_idx = {
+            make_name(color, type): idx for idx, (color, type) in enumerate(color_types)
+        }
+        self.idx_2_name = {idx: name for name, idx in self.name_2_idx.items()}
 
-      # object_types = OBJECT_TO_IDX.keys()
-      object_types = ['key', 'ball', 'box']
-      color_types = itertools.product(COLOR_NAMES, object_types)
-      self.name_2_idx = {make_name(color, type): idx for idx, (color, type) in enumerate(color_types)}
-      self.idx_2_name = {idx: name for name, idx in self.name_2_idx.items()}
+        super().__init__(
+            room_size=room_size,
+            num_rows=num_rows,
+            num_cols=num_cols,
+            num_dists=num_dists,
+            locations=locations,  # randomize locations?
+            unblocking=unblocking,  # require need to unblock
+            implicit_unlock=implicit_unlock,
+            **kwargs,
+        )
+        self._max_steps = max_steps_per_room * self.num_navs_needed()
 
-      super().__init__(
-          room_size=room_size,
-          num_rows=num_rows,
-          num_cols=num_cols,
-          num_dists=num_dists,
-          locations=locations, # randomize locations?
-          unblocking=unblocking,  # require need to unblock
-          implicit_unlock=implicit_unlock,
-          **kwargs,
-      )
-      self._max_steps = max_steps_per_room*self.num_navs_needed()
+        # 1 generation to get self._train_objects (which are fixed across episodes)
+        self.reset()
 
-      # 1 generation to get self._train_objects (which are fixed across episodes)
-      self.reset()
+        self._train_tasks = [make_name(o.color, o.type) for o in self._train_objects]
+        # overwritten with correct, [n_train_tasks, n_features]
+        self._train_task_vectors = np.array(
+            [
+                onehot(self.name_2_idx[token], self.nfeatures)
+                for token in self._train_tasks
+            ]
+        )
 
-      self._train_tasks = [make_name(o.color, o.type) for o in self._train_objects]
-      # overwritten with correct, [n_train_tasks, n_features]
-      self._train_task_vectors = np.array([
-         onehot(self.name_2_idx[token], self.nfeatures) for token in self._train_tasks])
-
-      cumulants_space = spaces.Box(
-          low=0,
-          high=100.0,
-          shape=(self.nfeatures,),  # number of cells
-          dtype="float32",
-      )
-      train_task_vectors = spaces.Box(
-          low=0,
-          high=100.0,
-          shape=self._train_task_vectors.shape,  # number of cells
-          dtype="float32",
-      )
-      self.observation_space = spaces.Dict(
-          {**self.observation_space.spaces,
-            "state_features": cumulants_space,
-            "task": copy.deepcopy(cumulants_space),  # equivalent specs
-            "train_tasks": train_task_vectors,
-          }
-      )
+        cumulants_space = spaces.Box(
+            low=0,
+            high=100.0,
+            shape=(self.nfeatures,),  # number of cells
+            dtype="float32",
+        )
+        train_task_vectors = spaces.Box(
+            low=0,
+            high=100.0,
+            shape=self._train_task_vectors.shape,  # number of cells
+            dtype="float32",
+        )
+        self.observation_space = spaces.Dict(
+            {
+                **self.observation_space.spaces,
+                "state_features": cumulants_space,
+                "task": copy.deepcopy(cumulants_space),  # equivalent specs
+                "train_tasks": train_task_vectors,
+            }
+        )
 
     @property
     def task_option(self):
-      return self._train_task_option if self._training else self._transfer_task_option
+        return self._train_task_option if self._training else self._transfer_task_option
 
     @property
     def train_colors(self):
-      return COLOR_NAMES[:4]
+        return COLOR_NAMES[:4]
 
     @property
     def nfeatures(self):
-      return len(self.name_2_idx)
+        return len(self.name_2_idx)
 
-    def make_features(self, idx: Optional[Union[List, int]]=None):
+    def make_features(self, idx: Optional[Union[List, int]] = None):
         state_features = np.zeros(self.nfeatures)
         if idx is not None:
             if isinstance(idx, list):
-              for i in idx:
-                state_features[i] = 1
+                for i in idx:
+                    state_features[i] = 1
             elif isinstance(idx, int):
-              state_features[idx] = 1
+                state_features[idx] = 1
             else:
                 raise NotImplementedError(f"idx type {type(idx)} not supported")
         return state_features
@@ -197,7 +224,7 @@ class KeyRoom(LevelGen):
     def gen_mission(self):
         """_summary_
 
-        
+
         Returns:
             _type_: _description_
         """
@@ -208,7 +235,7 @@ class KeyRoom(LevelGen):
         ###########################
         # Place agent in center room
         ###########################
-        center_room = (self.num_rows//2, self.num_cols//2)
+        center_room = (self.num_rows // 2, self.num_cols // 2)
         self.place_agent(*center_room)
         _ = self.room_from_pos(*self.agent_pos)
 
@@ -220,7 +247,7 @@ class KeyRoom(LevelGen):
         key_idxs = list(range(len(key_colors)))
         goal_room_idxs = [0, 1, 2, 3]
         # starts to the right for some reason
-        goal_room_coords = [(2,1), (1, 2), (0, 1), (1,0)]
+        goal_room_coords = [(2, 1), (1, 2), (0, 1), (1, 0)]
 
         if not self._fixed_door_locs:
             key_idxs = np.random.permutation(key_idxs)
@@ -236,16 +263,16 @@ class KeyRoom(LevelGen):
             key = Key(key_colors[i])
             self.place_in_room(*center_room, key)
             door, pos = self.add_door(
-                *center_room, 
+                *center_room,
                 door_idx=goal_room_idxs[i],
                 color=key_colors[i],
-                locked=True)
+                locked=True,
+            )
 
             ball = Ball(key_colors[i])
             self.place_in_room(*goal_room_coords[i], ball)
             room_objects.append(ball)
             room_objects.append(key)
-
 
         ###########################
         # place non-task object
@@ -279,15 +306,16 @@ class KeyRoom(LevelGen):
         self.instruction.reset_verifier(self)
 
     def update_obs(self, obs):
-      state_features = self.make_features()
-      if self.carrying:
-          obj_idx = self.name_2_idx[
-              make_name(self.carrying.color, self.carrying.type)]
-          state_features[obj_idx] = 1
+        state_features = self.make_features()
+        if self.carrying:
+            obj_idx = self.name_2_idx[
+                make_name(self.carrying.color, self.carrying.type)
+            ]
+            state_features[obj_idx] = 1
 
-      obs['task'] = self.task_vector
-      obs['train_tasks'] = self._train_task_vectors
-      obs['state_features'] = state_features
+        obs["task"] = self.task_vector
+        obs["train_tasks"] = self._train_task_vectors
+        obs["state_features"] = state_features
 
     def reset(self, *args, **kwargs):
         obs, info = super().reset(*args, **kwargs)
@@ -295,19 +323,19 @@ class KeyRoom(LevelGen):
         return obs, info
 
     def step(self, action, **kwargs):
-      obs, reward, terminated, truncated, info = super().step(action, **kwargs)
-      self.update_obs(obs)
+        obs, reward, terminated, truncated, info = super().step(action, **kwargs)
+        self.update_obs(obs)
 
-      reward = (obs['state_features']*obs['task']).sum(-1)
+        reward = (obs["state_features"] * obs["task"]).sum(-1)
 
-      if self.step_count >= self._max_steps:
-          truncated = True
-          terminated = True
+        if self.step_count >= self._max_steps:
+            truncated = True
+            terminated = True
 
-      return obs, reward, terminated, truncated, info
+        return obs, reward, terminated, truncated, info
 
     def all_types(self):
-        return set(self._train_objects+self._transfer_objects)
+        return set(self._train_objects + self._transfer_objects)
 
     def _gen_grid(self, width, height):
         # We catch RecursionError to deal with rare cases where
@@ -338,4 +366,3 @@ class KeyRoom(LevelGen):
 
     def num_navs_needed(self, instr: str = None) -> int:
         return 2
-

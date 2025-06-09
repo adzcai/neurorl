@@ -19,60 +19,58 @@ Copied from: https://github.com/deepmind/acme/blob/master/examples/baselines/rl_
 """
 # Do not preallocate GPU memory for JAX.
 import os
+
 # https://github.com/google/jax/issues/8302
-os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
-os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 
 import dataclasses
 import datetime
-from typing import Optional, NamedTuple, Any, Callable, List, Iterator
-
-
 from functools import partial
-from absl import flags
-from absl import app
-from acme.jax import experiments
-from acme.utils import loggers
-from acme.utils import paths
-from acme.jax import types
-from acme.agents.jax import builders
-from acme import specs
-from acme.utils.observers import EnvLoopObserver
+from typing import Any, Callable, Iterator, List, NamedTuple, Optional
 
 import dm_env
+from absl import app, flags
+from acme import specs
+from acme.agents.jax import builders
+from acme.jax import experiments, types
+from acme.utils import loggers, paths
+from acme.utils.observers import EnvLoopObserver
 
 import library.experiment_logger as experiment_logger
 import library.utils as utils
-
 
 # -----------------------
 # flags
 # -----------------------
 
 # Flags which modify the behavior of the launcher.
-flags.DEFINE_string('path', '.', 'config file')
+flags.DEFINE_string("path", ".", "config file")
 flags.DEFINE_bool(
-    'run_distributed', False, 'Should an agent be executed in a distributed '
-    'way. If False, will run single-threaded.')
-flags.DEFINE_integer('seed', 0, 'Random seed (experiment).')
-flags.DEFINE_integer('num_steps', 1_000_000,
-                     'Number of environment steps to run for.')
+    "run_distributed",
+    False,
+    "Should an agent be executed in a distributed "
+    "way. If False, will run single-threaded.",
+)
+flags.DEFINE_integer("seed", 0, "Random seed (experiment).")
+flags.DEFINE_integer("num_steps", 1_000_000, "Number of environment steps to run for.")
 
 # -----------------------
 # wandb
 # -----------------------
-flags.DEFINE_bool('use_wandb', False, 'whether to log.')
-flags.DEFINE_string('wandb_project', None, 'wand project.')
-flags.DEFINE_string('wandb_entity', None, 'wandb entity')
-flags.DEFINE_string('wandb_group', '', 'same as wandb group. way to group runs.')
-flags.DEFINE_string('wandb_name', '', 'name of run. way to group runs.')
-flags.DEFINE_string('wandb_notes', '', 'notes for wandb.')
-flags.DEFINE_string('folder', '', 'folder for experiments.')
+flags.DEFINE_bool("use_wandb", False, "whether to log.")
+flags.DEFINE_string("wandb_project", None, "wand project.")
+flags.DEFINE_string("wandb_entity", None, "wandb entity")
+flags.DEFINE_string("wandb_group", "", "same as wandb group. way to group runs.")
+flags.DEFINE_string("wandb_name", "", "name of run. way to group runs.")
+flags.DEFINE_string("wandb_notes", "", "notes for wandb.")
+flags.DEFINE_string("folder", "", "folder for experiments.")
 
 FLAGS = flags.FLAGS
 
 Seed = int
 Eval = bool
+
 
 def setup_logger_factory(
     agent_config,
@@ -80,282 +78,291 @@ def setup_logger_factory(
     save_config_dict: dict = None,
     log_dir: str = None,
     log_every: int = 30.0,
-    log_with_key: Optional[str] = 'log_data',
-    actor_label: str = 'actor',
-    evaluator_label: str = 'evaluator',
-    learner_label: str = 'learner',
+    log_with_key: Optional[str] = "log_data",
+    actor_label: str = "actor",
+    evaluator_label: str = "evaluator",
+    learner_label: str = "learner",
     custom_steps_keys: Optional[Callable[[str], str]] = None,
     wandb_init_kwargs=None,
 ):
-  """Builds experiment config."""
+    """Builds experiment config."""
 
-  assert log_dir, 'provide directory for logging experiments via FLAGS.folder'
-  paths.process_path(log_dir)
-  utils.save_config(f'{log_dir}/config.pkl', agent_config.__dict__)
-  # -----------------------
-  # wandb setup
-  # -----------------------
-  wandb_init_kwargs = wandb_init_kwargs or dict()
-  save_config_dict = save_config_dict or dict()
-
-  use_wandb = len(wandb_init_kwargs)
-  if use_wandb:
-    import wandb
-
-    # add config to wandb
-    wandb_config = wandb_init_kwargs.get("config", {})
+    assert log_dir, "provide directory for logging experiments via FLAGS.folder"
+    paths.process_path(log_dir)
+    utils.save_config(f"{log_dir}/config.pkl", agent_config.__dict__)
+    # -----------------------
+    # wandb setup
+    # -----------------------
+    wandb_init_kwargs = wandb_init_kwargs or dict()
     save_config_dict = save_config_dict or dict()
-    save_config_dict.update(agent_config.__dict__)
-    wandb_config.update(save_config_dict)
 
-    wandb_init_kwargs['config'] = wandb_config
-    wandb_init_kwargs['dir'] = log_dir
-    wandb_init_kwargs['reinit'] = True
-    wandb_init_kwargs['settings'] = wandb.Settings(
-      code_dir=log_dir,
-      start_method="fork")
-    wandb.init(**wandb_init_kwargs)
-
-  # -----------------------
-  # create logger factory
-  # -----------------------
-  def logger_factory(
-      name: str,
-      steps_key: Optional[str] = None,
-      task_id: Optional[int] = None,
-  ) -> loggers.Logger:
-    if custom_steps_keys is not None:
-      steps_key = custom_steps_keys(name)
+    use_wandb = len(wandb_init_kwargs)
     if use_wandb:
-      wandb.init(**wandb_init_kwargs)
+        import wandb
 
-  def logger_factory(
-      name: str,
-      steps_key: Optional[str] = None,
-      actor_id: Optional[int] = None,
-  ) -> loggers.Logger:
-    """Logger factory. initialized wandb (inside process). only 1st process logs to wandb. 
-    only 1st process saves data. """
-    if custom_steps_keys is not None:
-      steps_key = custom_steps_keys(name)
-    if use_wandb:
-      wandb.init(**wandb_init_kwargs)
+        # add config to wandb
+        wandb_config = wandb_init_kwargs.get("config", {})
+        save_config_dict = save_config_dict or dict()
+        save_config_dict.update(agent_config.__dict__)
+        wandb_config.update(save_config_dict)
 
-    if name == 'actor':
-      return experiment_logger.make_logger(
-          log_dir=log_dir,
-          label=actor_label,
-          time_delta=0.0,
-          log_with_key=log_with_key,
-          steps_key=steps_key,
-          save_data=actor_id == 0,
-          use_wandb=use_wandb and actor_id == 0)
-    elif name == 'evaluator':
-      return experiment_logger.make_logger(
-          log_dir=log_dir,
-          label=evaluator_label,
-          time_delta=0.0,
-          log_with_key=log_with_key,
-          steps_key=steps_key,
-          use_wandb=use_wandb and actor_id == 0)
-    elif name == 'learner':
-      return experiment_logger.make_logger(
-          log_dir=log_dir,
-          label=learner_label,
-          time_delta=log_every,
-          steps_key=steps_key,
-          use_wandb=use_wandb,
-          asynchronous=True)
-  return logger_factory
-  return logger_factory
+        wandb_init_kwargs["config"] = wandb_config
+        wandb_init_kwargs["dir"] = log_dir
+        wandb_init_kwargs["reinit"] = True
+        wandb_init_kwargs["settings"] = wandb.Settings(
+            code_dir=log_dir, start_method="fork"
+        )
+        wandb.init(**wandb_init_kwargs)
+
+    # -----------------------
+    # create logger factory
+    # -----------------------
+    def logger_factory(
+        name: str,
+        steps_key: Optional[str] = None,
+        task_id: Optional[int] = None,
+    ) -> loggers.Logger:
+        if custom_steps_keys is not None:
+            steps_key = custom_steps_keys(name)
+        if use_wandb:
+            wandb.init(**wandb_init_kwargs)
+
+    def logger_factory(
+        name: str,
+        steps_key: Optional[str] = None,
+        actor_id: Optional[int] = None,
+    ) -> loggers.Logger:
+        """Logger factory. initialized wandb (inside process). only 1st process logs to wandb.
+        only 1st process saves data."""
+        if custom_steps_keys is not None:
+            steps_key = custom_steps_keys(name)
+        if use_wandb:
+            wandb.init(**wandb_init_kwargs)
+
+        if name == "actor":
+            return experiment_logger.make_logger(
+                log_dir=log_dir,
+                label=actor_label,
+                time_delta=0.0,
+                log_with_key=log_with_key,
+                steps_key=steps_key,
+                save_data=actor_id == 0,
+                use_wandb=use_wandb and actor_id == 0,
+            )
+        elif name == "evaluator":
+            return experiment_logger.make_logger(
+                log_dir=log_dir,
+                label=evaluator_label,
+                time_delta=0.0,
+                log_with_key=log_with_key,
+                steps_key=steps_key,
+                use_wandb=use_wandb and actor_id == 0,
+            )
+        elif name == "learner":
+            return experiment_logger.make_logger(
+                log_dir=log_dir,
+                label=learner_label,
+                time_delta=log_every,
+                steps_key=steps_key,
+                use_wandb=use_wandb,
+                asynchronous=True,
+            )
+
+    return logger_factory
+    return logger_factory
 
 
 def setup_evaluator_factories(
-        builder,
-        environment_factory,
-        network_factory,
-        logger_factory,
-        observers):
- # -----------------------
-  # create evaluator factory
-  # -----------------------
-  def eval_policy_factory(networks: builders.Networks,
-                          environment_spec: specs.EnvironmentSpec,
-                          evaluation: bool) -> builders.Policy:
-    del evaluation
-    return builder.make_policy(
-        networks=networks,
-        environment_spec=environment_spec,
-        evaluation=True)
+    builder, environment_factory, network_factory, logger_factory, observers
+):
+    # -----------------------
+    # create evaluator factory
+    # -----------------------
+    def eval_policy_factory(
+        networks: builders.Networks,
+        environment_spec: specs.EnvironmentSpec,
+        evaluation: bool,
+    ) -> builders.Policy:
+        del evaluation
+        return builder.make_policy(
+            networks=networks, environment_spec=environment_spec, evaluation=True
+        )
 
-  return [
-      experiments.default_evaluator_factory(
-          environment_factory=partial(environment_factory,
-                                      evaluation=True),  # Key difference
-          network_factory=network_factory,
-          policy_factory=eval_policy_factory,
-          logger_factory=logger_factory,
-          observers=observers)
-  ]
+    return [
+        experiments.default_evaluator_factory(
+            environment_factory=partial(
+                environment_factory, evaluation=True
+            ),  # Key difference
+            network_factory=network_factory,
+            policy_factory=eval_policy_factory,
+            logger_factory=logger_factory,
+            observers=observers,
+        )
+    ]
 
 
 class OnlineExperimentConfigInputs(NamedTuple):
-  agent: str
-  agent_config: dict
-  final_env_kwargs: dict
-  builder: Any
-  network_factory: Callable[[specs.EnvironmentSpec], builders.Networks]
-  environment_factory: Callable[[Seed, Eval], dm_env.Environment]
-  observers: Optional[List[EnvLoopObserver]] = None
+    agent: str
+    agent_config: dict
+    final_env_kwargs: dict
+    builder: Any
+    network_factory: Callable[[specs.EnvironmentSpec], builders.Networks]
+    environment_factory: Callable[[Seed, Eval], dm_env.Environment]
+    observers: Optional[List[EnvLoopObserver]] = None
 
 
 def build_online_experiment_config(
-  experiment_config_inputs: OnlineExperimentConfigInputs,
-  debug: bool = False,
-  save_config_dict: dict = None,
-  log_dir: str = None,
-  log_every: int = 30.0,
-  log_with_key: Optional[str] = 'log_data',
-  observers: Optional[List[EnvLoopObserver]] = None,
-  wandb_init_kwargs: dict = None,
-  logger_factory_kwargs: dict = None
-  ):
-  """Builds experiment config."""
-  agent = experiment_config_inputs.agent
-  agent_config = experiment_config_inputs.agent_config
-  builder = experiment_config_inputs.builder
-  network_factory = experiment_config_inputs.network_factory
-  environment_factory = experiment_config_inputs.environment_factory
-  env_kwargs = experiment_config_inputs.final_env_kwargs
-  observers = experiment_config_inputs.observers or ()
-  logger_factory_kwargs = logger_factory_kwargs or dict()
-  wandb_init_kwargs = wandb_init_kwargs or dict()
+    experiment_config_inputs: OnlineExperimentConfigInputs,
+    debug: bool = False,
+    save_config_dict: dict = None,
+    log_dir: str = None,
+    log_every: int = 30.0,
+    log_with_key: Optional[str] = "log_data",
+    observers: Optional[List[EnvLoopObserver]] = None,
+    wandb_init_kwargs: dict = None,
+    logger_factory_kwargs: dict = None,
+):
+    """Builds experiment config."""
+    agent = experiment_config_inputs.agent
+    agent_config = experiment_config_inputs.agent_config
+    builder = experiment_config_inputs.builder
+    network_factory = experiment_config_inputs.network_factory
+    environment_factory = experiment_config_inputs.environment_factory
+    env_kwargs = experiment_config_inputs.final_env_kwargs
+    observers = experiment_config_inputs.observers or ()
+    logger_factory_kwargs = logger_factory_kwargs or dict()
+    wandb_init_kwargs = wandb_init_kwargs or dict()
 
-  assert log_dir, 'provide directory for logging experiments via FLAGS.folder'
-  paths.process_path(log_dir)
-  utils.save_config(f'{log_dir}/config.pkl', agent_config.__dict__)
+    assert log_dir, "provide directory for logging experiments via FLAGS.folder"
+    paths.process_path(log_dir)
+    utils.save_config(f"{log_dir}/config.pkl", agent_config.__dict__)
 
-  save_config_dict = save_config_dict or dict()
-  save_config_dict.update(
+    save_config_dict = save_config_dict or dict()
+    save_config_dict.update(
         agent=agent,
-        group=wandb_init_kwargs.get('group', None),
+        group=wandb_init_kwargs.get("group", None),
         **env_kwargs,
-      )
-  logger_factory = setup_logger_factory(
-      agent_config,
-      debug=debug,
-      save_config_dict=save_config_dict,
-      log_dir=log_dir,
-      log_every=log_every,
-      log_with_key=log_with_key,
-      wandb_init_kwargs=wandb_init_kwargs,
-      **logger_factory_kwargs,
-  )
+    )
+    logger_factory = setup_logger_factory(
+        agent_config,
+        debug=debug,
+        save_config_dict=save_config_dict,
+        log_dir=log_dir,
+        log_every=log_every,
+        log_with_key=log_with_key,
+        wandb_init_kwargs=wandb_init_kwargs,
+        **logger_factory_kwargs,
+    )
 
-  evaluator_factories = setup_evaluator_factories(
-      builder=builder,
-      environment_factory=environment_factory,
-      network_factory=network_factory,
-      logger_factory=logger_factory,
-      observers=observers)
+    evaluator_factories = setup_evaluator_factories(
+        builder=builder,
+        environment_factory=environment_factory,
+        network_factory=network_factory,
+        logger_factory=logger_factory,
+        observers=observers,
+    )
 
-  return experiments.ExperimentConfig(
-      builder=builder,
-      network_factory=network_factory,
-      environment_factory=environment_factory,
-      seed=agent_config.seed,
-      max_num_actor_steps=agent_config.num_steps,
-      observers=observers,
-      logger_factory=logger_factory,
-      evaluator_factories=evaluator_factories,
-      checkpointing=experiments.CheckpointingConfig(
-          directory=log_dir,
-          max_to_keep=5,
-          add_uid=False,
-          time_delta_minutes=60,  # save every 60 minutes
-          checkpoint_ttl_seconds=int(datetime.timedelta(days=30).total_seconds()))
-      )
+    return experiments.ExperimentConfig(
+        builder=builder,
+        network_factory=network_factory,
+        environment_factory=environment_factory,
+        seed=agent_config.seed,
+        max_num_actor_steps=agent_config.num_steps,
+        observers=observers,
+        logger_factory=logger_factory,
+        evaluator_factories=evaluator_factories,
+        checkpointing=experiments.CheckpointingConfig(
+            directory=log_dir,
+            max_to_keep=5,
+            add_uid=False,
+            time_delta_minutes=60,  # save every 60 minutes
+            checkpoint_ttl_seconds=int(datetime.timedelta(days=30).total_seconds()),
+        ),
+    )
 
 
 class OfflineExperimentConfigInputs(NamedTuple):
-  agent_config: dict
-  final_env_kwargs: dict
-  builder: Any
-  network_factory: Callable[[specs.EnvironmentSpec], builders.Networks]
-  demonstration_dataset_factory: Callable[[types.PRNGKey],
-                                          Iterator[builders.Sample]]
-  environment_spec: specs.EnvironmentSpec
-  environment_factory: Callable[[Seed, Eval], dm_env.Environment]
-  observers: Optional[List[EnvLoopObserver]] = None
+    agent_config: dict
+    final_env_kwargs: dict
+    builder: Any
+    network_factory: Callable[[specs.EnvironmentSpec], builders.Networks]
+    demonstration_dataset_factory: Callable[[types.PRNGKey], Iterator[builders.Sample]]
+    environment_spec: specs.EnvironmentSpec
+    environment_factory: Callable[[Seed, Eval], dm_env.Environment]
+    observers: Optional[List[EnvLoopObserver]] = None
 
 
 def build_offline_experiment_config(
     experiment_config_inputs: OfflineExperimentConfigInputs,
     agent: str,
-    debug: bool=False,
+    debug: bool = False,
     save_config_dict: dict = None,
     log_dir: str = None,
     log_every: int = 30.0,
-    log_with_key: Optional[str] = 'log_data',
+    log_with_key: Optional[str] = "log_data",
     observers: Optional[List[EnvLoopObserver]] = None,
     wandb_init_kwargs: dict = None,
-    logger_factory_kwargs: dict = None
-    ):
-  """Returns a config for BC experiments."""
-  observers = observers or ()
-  agent_config = experiment_config_inputs.agent_config
-  builder = experiment_config_inputs.builder
-  network_factory = experiment_config_inputs.network_factory
-  demonstration_dataset_factory = experiment_config_inputs.demonstration_dataset_factory
-  environment_factory = experiment_config_inputs.environment_factory
-  environment_spec = experiment_config_inputs.environment_spec
-  env_kwargs = experiment_config_inputs.final_env_kwargs
-  observers = experiment_config_inputs.observers or ()
-  logger_factory_kwargs = logger_factory_kwargs or dict()
-  wandb_init_kwargs = wandb_init_kwargs or dict()
+    logger_factory_kwargs: dict = None,
+):
+    """Returns a config for BC experiments."""
+    observers = observers or ()
+    agent_config = experiment_config_inputs.agent_config
+    builder = experiment_config_inputs.builder
+    network_factory = experiment_config_inputs.network_factory
+    demonstration_dataset_factory = (
+        experiment_config_inputs.demonstration_dataset_factory
+    )
+    environment_factory = experiment_config_inputs.environment_factory
+    environment_spec = experiment_config_inputs.environment_spec
+    env_kwargs = experiment_config_inputs.final_env_kwargs
+    observers = experiment_config_inputs.observers or ()
+    logger_factory_kwargs = logger_factory_kwargs or dict()
+    wandb_init_kwargs = wandb_init_kwargs or dict()
 
-  assert log_dir, 'provide directory for logging experiments via FLAGS.folder'
-  paths.process_path(log_dir)
-  utils.save_config(f'{log_dir}/config.pkl', agent_config.__dict__)
+    assert log_dir, "provide directory for logging experiments via FLAGS.folder"
+    paths.process_path(log_dir)
+    utils.save_config(f"{log_dir}/config.pkl", agent_config.__dict__)
 
-  save_config_dict = save_config_dict or dict()
-  save_config_dict.update(
-      agent=agent,
-      group=wandb_init_kwargs.get('group', None),
-      **env_kwargs,
-  )
+    save_config_dict = save_config_dict or dict()
+    save_config_dict.update(
+        agent=agent,
+        group=wandb_init_kwargs.get("group", None),
+        **env_kwargs,
+    )
 
-  logger_factory = setup_logger_factory(
-      agent_config,
-      debug=debug,
-      save_config_dict=save_config_dict,
-      log_dir=log_dir,
-      log_every=log_every,
-      log_with_key=log_with_key,
-      wandb_init_kwargs=wandb_init_kwargs,
-      **logger_factory_kwargs,
-  )
-  evaluator_factories = setup_evaluator_factories(
-      builder=builder,
-      environment_factory=environment_factory,
-      network_factory=network_factory,
-      logger_factory=logger_factory,
-      observers=observers)
+    logger_factory = setup_logger_factory(
+        agent_config,
+        debug=debug,
+        save_config_dict=save_config_dict,
+        log_dir=log_dir,
+        log_every=log_every,
+        log_with_key=log_with_key,
+        wandb_init_kwargs=wandb_init_kwargs,
+        **logger_factory_kwargs,
+    )
+    evaluator_factories = setup_evaluator_factories(
+        builder=builder,
+        environment_factory=environment_factory,
+        network_factory=network_factory,
+        logger_factory=logger_factory,
+        observers=observers,
+    )
 
-  return experiments.OfflineExperimentConfig(
-      builder=builder,
-      network_factory=network_factory,
-      demonstration_dataset_factory=demonstration_dataset_factory,
-      environment_factory=environment_factory,
-      max_num_learner_steps=agent_config.num_learner_steps,
-      seed=agent_config.seed,
-      environment_spec=environment_spec,
-      observers=observers,
-      logger_factory=logger_factory,
-      evaluator_factories=evaluator_factories,
-      checkpointing=experiments.CheckpointingConfig(
-          directory=log_dir,
-          max_to_keep=5,
-          add_uid=False,
-          checkpoint_ttl_seconds=int(datetime.timedelta(days=30).total_seconds()))
-  )
+    return experiments.OfflineExperimentConfig(
+        builder=builder,
+        network_factory=network_factory,
+        demonstration_dataset_factory=demonstration_dataset_factory,
+        environment_factory=environment_factory,
+        max_num_learner_steps=agent_config.num_learner_steps,
+        seed=agent_config.seed,
+        environment_spec=environment_spec,
+        observers=observers,
+        logger_factory=logger_factory,
+        evaluator_factories=evaluator_factories,
+        checkpointing=experiments.CheckpointingConfig(
+            directory=log_dir,
+            max_to_keep=5,
+            add_uid=False,
+            checkpoint_ttl_seconds=int(datetime.timedelta(days=30).total_seconds()),
+        ),
+    )

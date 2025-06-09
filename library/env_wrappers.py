@@ -1,15 +1,19 @@
 import copy
 from typing import NamedTuple, Tuple
 
-from gymnasium.core import Wrapper
-from gymnasium import spaces
 import numpy as np
-
-from minigrid.utils import baby_ai_bot as bot_lib
-from minigrid.core.constants import COLOR_TO_IDX, OBJECT_TO_IDX, STATE_TO_IDX, IDX_TO_COLOR, IDX_TO_OBJECT
-
-
+from gymnasium import spaces
+from gymnasium.core import Wrapper
+from minigrid.core.constants import (
+    COLOR_TO_IDX,
+    IDX_TO_COLOR,
+    IDX_TO_OBJECT,
+    OBJECT_TO_IDX,
+    STATE_TO_IDX,
+)
 from minigrid.envs.babyai.core.verifier import PickupInstr
+from minigrid.utils import baby_ai_bot as bot_lib
+
 
 class GlobalObjDesc(NamedTuple):
     color: int
@@ -19,139 +23,146 @@ class GlobalObjDesc(NamedTuple):
     local_pos: Tuple[int, int]
     visible: bool
 
+
 def matrix_to_row(row, column, num_columns):
     unique_index = row * num_columns + column
     return unique_index
+
 
 def flat_to_matrix(unique_index, num_columns):
     row = unique_index // num_columns
     col = unique_index % num_columns
     return int(row), int(col)
 
+
 class GotoBot(bot_lib.BabyAIBot):
-  """"""
-  def __init__(self, env, loc):
+    """"""
 
-    # Mission to be solved
-    self.mission = mission = env
+    def __init__(self, env, loc):
 
-    # Visibility mask. True for explored/seen, false for unexplored.
-    self.vis_mask = np.zeros(shape=(mission.unwrapped.width, mission.unwrapped.height), dtype=bool)
+        # Mission to be solved
+        self.mission = mission = env
 
-    # Stack of tasks/subtasks to complete (tuples)
-    # self.subgoals = subgoals = self.mission.task.subgoals()
-    self.loc = loc
-    self.goal = bot_lib.GoNextToSubgoal(self, loc, reason='none')
-    self.stack = [self.goal]
-    self.stack.reverse()
+        # Visibility mask. True for explored/seen, false for unexplored.
+        self.vis_mask = np.zeros(
+            shape=(mission.unwrapped.width, mission.unwrapped.height), dtype=bool
+        )
 
-    # How many BFS searches this bot has performed
-    self.bfs_counter = 0
+        # Stack of tasks/subtasks to complete (tuples)
+        # self.subgoals = subgoals = self.mission.task.subgoals()
+        self.loc = loc
+        self.goal = bot_lib.GoNextToSubgoal(self, loc, reason="none")
+        self.stack = [self.goal]
+        self.stack.reverse()
 
-    # How many steps were made in total in all BFS searches
-    # performed by this bot
-    self.bfs_step_counter = 0
+        # How many BFS searches this bot has performed
+        self.bfs_counter = 0
 
-  def generate_trajectory(self, action_taken=None):
+        # How many steps were made in total in all BFS searches
+        # performed by this bot
+        self.bfs_step_counter = 0
 
-    # steps_left = len(self.stack)
-    env = self.mission
+    def generate_trajectory(self, action_taken=None):
 
-    all_obs = []
-    all_action = []
-    all_reward = []
-    all_truncated = []
-    all_done = []
-    all_info = []
+        # steps_left = len(self.stack)
+        env = self.mission
 
-    def step_update(_action):
-      _obs, _reward, _done, _trunc, _info = env.step(_action)
-      all_obs.append(_obs)
-      all_action.append(_action)
-      all_reward.append(_reward)
-      all_truncated.append(_trunc)
-      all_done.append(_done)
-      all_info.append(_info)
+        all_obs = []
+        all_action = []
+        all_reward = []
+        all_truncated = []
+        all_done = []
+        all_info = []
 
-    idx = 0
-    while self.stack:
-      idx += 1
-      if idx > 1000:
-        raise RuntimeError("Taking too long")
+        def step_update(_action):
+            _obs, _reward, _done, _trunc, _info = env.step(_action)
+            all_obs.append(_obs)
+            all_action.append(_action)
+            all_reward.append(_reward)
+            all_truncated.append(_trunc)
+            all_done.append(_done)
+            all_info.append(_info)
 
-      action = self.replan(action_taken)
+        idx = 0
+        while self.stack:
+            idx += 1
+            if idx > 1000:
+                raise RuntimeError("Taking too long")
 
-      # need to do extra step to complete, exit
-      if len(self.stack) > 1:
-         break
-      # -----------------------
-      # done??
-      # -----------------------
-      if action == env.actions.done:
-        break
+            action = self.replan(action_taken)
 
-      # -----------------------
-      # take actions
-      # -----------------------
-      step_update(action)
-      action_taken = action
+            # need to do extra step to complete, exit
+            if len(self.stack) > 1:
+                break
+            # -----------------------
+            # done??
+            # -----------------------
+            if action == env.actions.done:
+                break
 
-    return (
-      all_action,
-      all_obs,
-      all_reward,
-      all_truncated,
-      all_done,
-      all_info,
-    )
+            # -----------------------
+            # take actions
+            # -----------------------
+            step_update(action)
+            action_taken = action
 
-  def replan(self, action_taken=None):
-    """Replan and suggest an action.
+        return (
+            all_action,
+            all_obs,
+            all_reward,
+            all_truncated,
+            all_done,
+            all_info,
+        )
 
-    Call this method once per every iteration of the environment.
+    def replan(self, action_taken=None):
+        """Replan and suggest an action.
 
-    Args:
-        action_taken: The last action that the agent took. Can be `None`, in which
-        case the bot assumes that the action it suggested was taken (or that it is
-        the first iteration).
+        Call this method once per every iteration of the environment.
 
-    Returns:
-        suggested_action: The action that the bot suggests. Can be `done` if the
-        bot thinks that the mission has been accomplished.
+        Args:
+            action_taken: The last action that the agent took. Can be `None`, in which
+            case the bot assumes that the action it suggested was taken (or that it is
+            the first iteration).
 
-    """
-    self._process_obs()
+        Returns:
+            suggested_action: The action that the bot suggests. Can be `done` if the
+            bot thinks that the mission has been accomplished.
 
-    # Check that no box has been opened
-    self._check_erroneous_box_opening(action_taken)
+        """
+        self._process_obs()
 
-    # TODO: instead of updating all subgoals, just add a couple
-    # properties to the `Subgoal` class.
-    for subgoal in self.stack:
-        subgoal.update_agent_attributes()
+        # Check that no box has been opened
+        self._check_erroneous_box_opening(action_taken)
 
-    if self.stack:
-        self.stack[-1].replan_after_action(action_taken)
-    
-    suggested_action = None
-    while self.stack:
-        subgoal = self.stack[-1]
-        suggested_action = subgoal.replan_before_action()
-        # If is not clear what can be done for the current subgoal
-        # (because it is completed, because there is blocker,
-        # or because exploration is required), keep replanning
-        if suggested_action is not None:
-            break
-    if not self.stack:
-        suggested_action = self.mission.unwrapped.actions.done
+        # TODO: instead of updating all subgoals, just add a couple
+        # properties to the `Subgoal` class.
+        for subgoal in self.stack:
+            subgoal.update_agent_attributes()
 
-    self._remember_current_state()
+        if self.stack:
+            self.stack[-1].replan_after_action(action_taken)
 
-    return suggested_action
+        suggested_action = None
+        while self.stack:
+            subgoal = self.stack[-1]
+            suggested_action = subgoal.replan_before_action()
+            # If is not clear what can be done for the current subgoal
+            # (because it is completed, because there is blocker,
+            # or because exploration is required), keep replanning
+            if suggested_action is not None:
+                break
+        if not self.stack:
+            suggested_action = self.mission.unwrapped.actions.done
 
-  def _check_erroneous_box_opening(self, action):
-    # ignore this
-    pass
+        self._remember_current_state()
+
+        return suggested_action
+
+    def _check_erroneous_box_opening(self, action):
+        # ignore this
+        pass
+
 
 class GotoOptionsWrapper(Wrapper):
     """
@@ -163,11 +174,13 @@ class GotoOptionsWrapper(Wrapper):
     - given in N x 4 matrix where N is over objects.
     """
 
-    def __init__(self,
-                 env,
-                 max_options: int = 30,
-                 use_options: bool = True,
-                 partial_obs: bool = True):
+    def __init__(
+        self,
+        env,
+        max_options: int = 30,
+        use_options: bool = True,
+        partial_obs: bool = True,
+    ):
         """
         Args:
             env: The environment to apply the wrapper
@@ -176,16 +189,17 @@ class GotoOptionsWrapper(Wrapper):
         self.prior_primitive_action = None
         self.use_options = use_options
         self.primitive_actions = [
-          self.actions.left,
-          self.actions.right,
-          self.actions.forward,
-          self.actions.pickup,
-          self.actions.drop,
-          self.actions.toggle,
-          self.actions.done,  # does nothing
+            self.actions.left,
+            self.actions.right,
+            self.actions.forward,
+            self.actions.pickup,
+            self.actions.drop,
+            self.actions.toggle,
+            self.actions.done,  # does nothing
         ]
         self.primitive_actions_arr = np.array(
-           [int(a) for a in self.primitive_actions], dtype=np.uint8)
+            [int(a) for a in self.primitive_actions], dtype=np.uint8
+        )
         self.max_options = max_options
 
         if not partial_obs:
@@ -194,22 +208,28 @@ class GotoOptionsWrapper(Wrapper):
             self.num_cols = self.agent_view_size
 
         actions_space = spaces.Box(
-            low=0, high=255, # doesn't matter
+            low=0,
+            high=255,  # doesn't matter
             shape=(len(self.primitive_actions),),  # number of cells
             dtype="uint8",
         )
         self.max_dims_per_feature = 100
         nfeatures = 5  # x-pos, y-pos, color, type, state
         objects_space = spaces.Box(
-            low=0, high=255, # doesn't matter
-            shape=(max_options, self.max_dims_per_feature*nfeatures),  # number of cells
+            low=0,
+            high=255,  # doesn't matter
+            shape=(
+                max_options,
+                self.max_dims_per_feature * nfeatures,
+            ),  # number of cells
             dtype="uint8",
         )
         self.observation_space = spaces.Dict(
-            {**self.observation_space.spaces,
-             "actions": actions_space,
-             "objects": objects_space
-             }
+            {
+                **self.observation_space.spaces,
+                "actions": actions_space,
+                "objects": objects_space,
+            }
         )
 
     def get_objects(self):
@@ -217,78 +237,83 @@ class GotoOptionsWrapper(Wrapper):
         vis_mask = vis_mask.reshape(-1)
 
         objects = []
-        types_ignore = ['wall', 'unseen', 'empty', 'floor']
+        types_ignore = ["wall", "unseen", "empty", "floor"]
         for idx, (object, v) in enumerate(zip(grid.grid, vis_mask)):
-          if object is None: continue
-          if object.type in types_ignore: continue
-          type, color, state = object.encode()
-          obj = GlobalObjDesc(
-            type=type,
-            color=color,
-            state=state,
-            global_pos=object.cur_pos,
-            local_pos=flat_to_matrix(
-               idx, self.num_cols),
-            visible=v,
-          )
-          objects.append(obj)
+            if object is None:
+                continue
+            if object.type in types_ignore:
+                continue
+            type, color, state = object.encode()
+            obj = GlobalObjDesc(
+                type=type,
+                color=color,
+                state=state,
+                global_pos=object.cur_pos,
+                local_pos=flat_to_matrix(idx, self.num_cols),
+                visible=v,
+            )
+            objects.append(obj)
 
         return objects
 
     def post_env_iter_update(self, obs, info):
-      """Update after every env.reset() or env.step().
+        """Update after every env.reset() or env.step().
 
-      This will update the observation and env with relevant object information."""
-      #############
-      # Get visible objects
-      #############
-      objects = self.get_objects()
-      visible_objects =  [
-        o for o in objects if o.visible]
-      nobjects = len(visible_objects)
+        This will update the observation and env with relevant object information."""
+        #############
+        # Get visible objects
+        #############
+        objects = self.get_objects()
+        visible_objects = [o for o in objects if o.visible]
+        nobjects = len(visible_objects)
 
-      #############
-      # Create matrix with object information
-      #############
-      def make_onehot(idx):
-        x = np.zeros(self.max_dims_per_feature, dtype=np.uint8)
-        x[idx] = 1
-        return x
-      object_info = np.zeros(
-         (self.max_options, 5*self.max_dims_per_feature),
-         dtype=np.uint8)
-      for idx, obj in enumerate(objects):
-        object_info[idx] = np.concatenate(
-           (make_onehot(obj.local_pos[0]),
-            make_onehot(obj.local_pos[1]),
-            make_onehot(obj.type),
-            make_onehot(obj.color),
-            make_onehot(obj.state)))
+        #############
+        # Create matrix with object information
+        #############
+        def make_onehot(idx):
+            x = np.zeros(self.max_dims_per_feature, dtype=np.uint8)
+            x[idx] = 1
+            return x
 
-      #############
-      # Update observation
-      #############
-      obs['actions'] = self.primitive_actions_arr
-      obs['objects'] = object_info
-      info['nactions'] = len(self.primitive_actions_arr) + nobjects
-      info['nobjects'] = nobjects
+        object_info = np.zeros(
+            (self.max_options, 5 * self.max_dims_per_feature), dtype=np.uint8
+        )
+        for idx, obj in enumerate(objects):
+            object_info[idx] = np.concatenate(
+                (
+                    make_onehot(obj.local_pos[0]),
+                    make_onehot(obj.local_pos[1]),
+                    make_onehot(obj.type),
+                    make_onehot(obj.color),
+                    make_onehot(obj.state),
+                )
+            )
 
-      info['actions'] = self.primitive_actions + [
-        f'go to {IDX_TO_COLOR[o.color]} {IDX_TO_OBJECT[o.type]}' for o in visible_objects
-      ]
-      info['actions'] = {idx: action for idx, action in enumerate(info['actions'])}
-      #############
-      # Update environment variables
-      #############
-      self.prior_object = objects
-      self.prior_visible_objects = visible_objects
+        #############
+        # Update observation
+        #############
+        obs["actions"] = self.primitive_actions_arr
+        obs["objects"] = object_info
+        info["nactions"] = len(self.primitive_actions_arr) + nobjects
+        info["nobjects"] = nobjects
+
+        info["actions"] = self.primitive_actions + [
+            f"go to {IDX_TO_COLOR[o.color]} {IDX_TO_OBJECT[o.type]}"
+            for o in visible_objects
+        ]
+        info["actions"] = {idx: action for idx, action in enumerate(info["actions"])}
+        #############
+        # Update environment variables
+        #############
+        self.prior_object = objects
+        self.prior_visible_objects = visible_objects
 
     def reset(self, *args, **kwargs):
-      self.prior_primitive_action = None
+        self.prior_primitive_action = None
 
-      obs, info = self.env.reset(*args, **kwargs)
-      self.post_env_iter_update(obs, info)
-      return obs, info
+        obs, info = self.env.reset(*args, **kwargs)
+        self.post_env_iter_update(obs, info)
+        return obs, info
 
     def execute_option(self, action):
         option_idx = action - len(self.primitive_actions)
@@ -299,9 +324,9 @@ class GotoOptionsWrapper(Wrapper):
         front_pos = self.unwrapped.front_pos
         global_pos = obj.global_pos
         if front_pos[0] == global_pos[0] and front_pos[1] == global_pos[1]:
-          # don't update prior primitive action
-          # self.prior_primitive_action = action
-          return self.env.step(self.actions.done)
+            # don't update prior primitive action
+            # self.prior_primitive_action = action
+            return self.env.step(self.actions.done)
 
         # otherwise, generate a trajectory to the goal position
         bot = GotoBot(self.env, obj.global_pos)
@@ -309,55 +334,59 @@ class GotoOptionsWrapper(Wrapper):
 
         # not doable
         if len(actions) == 0:
-           return self.env.step(self.actions.done)
+            return self.env.step(self.actions.done)
 
         self.prior_primitive_action = actions[-1]
 
-        return (obss[-1],
-                sum(rewards),
-                sum(dones) > 0,
-                truncateds[-1],
-                infos[-1])
+        return (obss[-1], sum(rewards), sum(dones) > 0, truncateds[-1], infos[-1])
 
     def step(self, action, *args, **kwargs):
         """Steps through the environment with `action`."""
 
         if action in self.primitive_actions:
-          obs, reward, terminated, truncated, info = self.env.step(action, *args, **kwargs)
-          self.prior_primitive_action = action
-        else:
-          if self.use_options:
-            assert len(self.prior_visible_objects), "impossible"
-            obs, reward, terminated, truncated, info = self.execute_option(action)
-          else:
-            # ignore the action
-            obs, reward, terminated, truncated, info = self.env.step(self.actions.done, *args, **kwargs)
+            obs, reward, terminated, truncated, info = self.env.step(
+                action, *args, **kwargs
+            )
             self.prior_primitive_action = action
+        else:
+            if self.use_options:
+                assert len(self.prior_visible_objects), "impossible"
+                obs, reward, terminated, truncated, info = self.execute_option(action)
+            else:
+                # ignore the action
+                obs, reward, terminated, truncated, info = self.env.step(
+                    self.actions.done, *args, **kwargs
+                )
+                self.prior_primitive_action = action
 
         self.post_env_iter_update(obs, info)
         return obs, reward, terminated, truncated, info
 
+
 def main():
-  from envs.key_room import KeyRoom
-  import minigrid
-  import random
-  from pprint import pprint
-  env = KeyRoom(num_dists=0, fixed_door_locs=False)
-  env = minigrid.wrappers.DictObservationSpaceWrapper(env)
-  env = GotoOptionsWrapper(env)
-  env = minigrid.wrappers.RGBImgObsWrapper(env, tile_size=12)
+    import random
+    from pprint import pprint
 
+    import minigrid
 
-  obs, info = env.reset()
+    from envs.key_room import KeyRoom
 
-  for t in range(100):
-      actions = list(range(obs['nactions']))
-      print(t, "="*10, f'{len(actions)} actions', "="*10)
-      print(actions)
-      pprint(info['actions'])
-      action = random.choice(actions)
-      print(f"Action taken {action}:", info['actions'][action])
-      obs, reward, done, truncated, info = env.step(action)
+    env = KeyRoom(num_dists=0, fixed_door_locs=False)
+    env = minigrid.wrappers.DictObservationSpaceWrapper(env)
+    env = GotoOptionsWrapper(env)
+    env = minigrid.wrappers.RGBImgObsWrapper(env, tile_size=12)
+
+    obs, info = env.reset()
+
+    for t in range(100):
+        actions = list(range(obs["nactions"]))
+        print(t, "=" * 10, f"{len(actions)} actions", "=" * 10)
+        print(actions)
+        pprint(info["actions"])
+        action = random.choice(actions)
+        print(f"Action taken {action}:", info["actions"][action])
+        obs, reward, done, truncated, info = env.step(action)
+
 
 if __name__ == "__main__":
-  main()
+    main()
