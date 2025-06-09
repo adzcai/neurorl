@@ -27,7 +27,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.uv]
 package = true
-override-dependencies = [ "numpy==1.22.4", "scipy==1.12.0", "dm-haiku==0.0.10" ]
+override-dependencies = [ "numpy==1.23.5", "scipy==1.12.0", "dm-haiku==0.0.10" ]
 
 [[tool.uv.index]]
 name = "jax"

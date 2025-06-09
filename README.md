@@ -10,12 +10,13 @@ The following recurrent agents are supported:
 ## Installation
 
 We recommend creating a new Python 3.10 virtual environment.
+We recommend the excellent tool [uv](https://docs.astral.sh/uv/) for managing Python projects.
 To create a virtual environment in `.venv` and install dependencies:
 
 ```bash
-python3 -m venv .venv
+python3 -m venv .venv  # or uv venv --python 3.10
 source .venv/bin/activate
-pip3 install -e .
+pip3 install -e .  # or uv sync
 ```
 
 ## Cluster instructions
@@ -24,7 +25,8 @@ On the FAS cluster, load the modules for Python 3.10 and CUDA
 *before* running the installation above:
 
 ```bash
-module load python/3.10.13-fasrc01 cuda/11.8.0-fasrc01 cudnn/8.9.2.26_cuda11-fasrc01
+module load python/3.10.13-fasrc01  # if not using uv
+module load cuda/11.8.0-fasrc01 cudnn/8.9.2.26_cuda11-fasrc01
 ```
 
 After creating the venv,

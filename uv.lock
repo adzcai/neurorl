@@ -19,7 +19,7 @@ resolution-markers = [
 [manifest]
 overrides = [
     { name = "dm-haiku", specifier = "==0.0.10" },
-    { name = "numpy", specifier = "==1.22.4" },
+    { name = "numpy", specifier = "==1.23.5" },
     { name = "scipy", specifier = "==1.12.0" },
 ]
 
@@ -1222,17 +1222,22 @@ requires-dist = [
 
 [[package]]
 name = "numpy"
-version = "1.22.4"
+version = "1.23.5"
 source = { registry = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/simple/" }
-sdist = { url = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/numpy/numpy-1.22.4.zip", hash = "sha256:425b390e4619f58d8526b3dcf656dde069133ae5c240229821f01b5f44ea07af" }
+sdist = { url = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/numpy/numpy-1.23.5.tar.gz", hash = "sha256:1b1766d6f397c18153d40015ddfc79ddb715cabadc04d2d228d4e5a8bc4ded1a" }
 wheels = [
-    { url = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/numpy/numpy-1.22.4-cp310-cp310-macosx_10_14_x86_64.whl", hash = "sha256:ba9ead61dfb5d971d77b6c131a9dbee62294a932bf6a356e48c75ae684e635b3" },
-    { url = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/numpy/numpy-1.22.4-cp310-cp310-macosx_10_15_x86_64.whl", hash = "sha256:1ce7ab2053e36c0a71e7a13a7475bd3b1f54750b4b433adc96313e127b870887" },
-    { url = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/numpy/numpy-1.22.4-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:7228ad13744f63575b3a972d7ee4fd61815b2879998e70930d4ccf9ec721dce0" },
-    { url = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/numpy/numpy-1.22.4-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:43a8ca7391b626b4c4fe20aefe79fec683279e31e7c79716863b4b25021e0e74" },
-    { url = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/numpy/numpy-1.22.4-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a911e317e8c826ea632205e63ed8507e0dc877dcdc49744584dfc363df9ca08c" },
-    { url = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/numpy/numpy-1.22.4-cp310-cp310-win32.whl", hash = "sha256:9ce7df0abeabe7fbd8ccbf343dc0db72f68549856b863ae3dd580255d009648e" },
-    { url = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/numpy/numpy-1.22.4-cp310-cp310-win_amd64.whl", hash = "sha256:3e1ffa4748168e1cc8d3cde93f006fe92b5421396221a02f2274aab6ac83b077" },
+    { url = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/numpy/numpy-1.23.5-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:9c88793f78fca17da0145455f0d7826bcb9f37da4764af27ac945488116efe63" },
+    { url = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/numpy/numpy-1.23.5-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:e9f4c4e51567b616be64e05d517c79a8a22f3606499941d97bb76f2ca59f982d" },
+    { url = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/numpy/numpy-1.23.5-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:7903ba8ab592b82014713c491f6c5d3a1cde5b4a3bf116404e08f5b52f6daf43" },
+    { url = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/numpy/numpy-1.23.5-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:5e05b1c973a9f858c74367553e236f287e749465f773328c8ef31abe18f691e1" },
+    { url = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/numpy/numpy-1.23.5-cp310-cp310-win32.whl", hash = "sha256:522e26bbf6377e4d76403826ed689c295b0b238f46c28a7251ab94716da0b280" },
+    { url = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/numpy/numpy-1.23.5-cp310-cp310-win_amd64.whl", hash = "sha256:dbee87b469018961d1ad79b1a5d50c0ae850000b639bcb1b694e9981083243b6" },
+    { url = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/numpy/numpy-1.23.5-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:ce571367b6dfe60af04e04a1834ca2dc5f46004ac1cc756fb95319f64c095a96" },
+    { url = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/numpy/numpy-1.23.5-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:56e454c7833e94ec9769fa0f86e6ff8e42ee38ce0ce1fa4cbb747ea7e06d56aa" },
+    { url = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/numpy/numpy-1.23.5-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:5039f55555e1eab31124a5768898c9e22c25a65c1e0037f4d7c495a45778c9f2" },
+    { url = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/numpy/numpy-1.23.5-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:58f545efd1108e647604a1b5aa809591ccd2540f468a880bedb97247e72db387" },
+    { url = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/numpy/numpy-1.23.5-cp311-cp311-win32.whl", hash = "sha256:b2a9ab7c279c91974f756c84c365a669a887efa287365a8e2c418f8b3ba73fb0" },
+    { url = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/numpy/numpy-1.23.5-cp311-cp311-win_amd64.whl", hash = "sha256:0cbe9848fad08baf71de1a39e12d1b6310f1d5b2d0ea4de051058e6e1076852d" },
 ]
 
 [[package]]
